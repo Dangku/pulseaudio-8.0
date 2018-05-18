@@ -50,6 +50,6 @@ autopoint --force
 AUTOPOINT='intltoolize --automake --copy' autoreconf --force --install --verbose
 
 if test "x$NOCONFIGURE" = "x"; then
-    CFLAGS="$CFLAGS -g -O0" ./configure --sysconfdir=/etc --localstatedir=/var --enable-force-preopen "$@" && \
+    CFLAGS="$CFLAGS -g -O0" ./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var --enable-force-preopen "$@" && \
         make clean
 fi
