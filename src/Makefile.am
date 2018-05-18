@@ -989,7 +989,7 @@ libpulsecore_sconv_neon_la_CFLAGS = $(AM_CFLAGS) $(NEON_CFLAGS)
 libpulsecore_mix_neon_la_SOURCES = pulsecore/mix_neon.c
 libpulsecore_mix_neon_la_CFLAGS = $(AM_CFLAGS) $(NEON_CFLAGS)
 libpulsecore_remap_neon_la_SOURCES = pulsecore/remap_neon.c
-libpulsecore_remap_neon_la_CFLAGS = $(AM_CFLAGS) $(NEON_CFLAGS)
+libpulsecore_remap_neon_la_CFLAGS = $(AM_CFLAGS) $(NEON_CFLAGS) -fomit-frame-pointer
 libpulsecore_@PA_MAJORMINOR@_la_LIBADD += libpulsecore_sconv_neon.la libpulsecore_mix_neon.la libpulsecore_remap_neon.la
 endif
 
