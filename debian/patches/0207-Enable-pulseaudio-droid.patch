@@ -1,0 +1,5513 @@
+Index: pulseaudio/configure.ac
+===================================================================
+--- pulseaudio.orig/configure.ac
++++ pulseaudio/configure.ac
+@@ -822,6 +822,21 @@ AM_CONDITIONAL([HAVE_ALSA], [test "x$HAV
+ AS_IF([test "x$HAVE_ALSA" = "x1"], AC_DEFINE([HAVE_ALSA], 1, [Have ALSA?]))
+ AS_IF([test "x$HAVE_ALSA_UCM" = "x1"], AC_DEFINE([HAVE_ALSA_UCM], 1, [Have ALSA UCM?]))
+ 
++#### Android Audio HAL support (optional) ####
++
++AC_ARG_ENABLE([android-hal],
++    AS_HELP_STRING([--disable-android-hal],[Disable optional droid module (Android Audio HAL support)]))
++
++AS_IF([test "x$enable_android_hal" != "xno"],
++    [PKG_CHECK_MODULES(LIBHARDWARE, [ libhardware ], HAVE_ANDROID=1, HAVE_ANDROID=0)],
++    HAVE_ANDROID=0)
++
++AS_IF([test "x$enable_android_hal" = "xyes" && test "x$HAVE_ANDROID" = "x0"],
++    [AC_MSG_ERROR([*** libhardware not found])])
++
++AM_CONDITIONAL([HAVE_ANDROID], [test "x$HAVE_ANDROID" = "x1"])
++AS_IF([test "x$HAVE_ANDROID" = "x1"], AC_DEFINE([HAVE_ANDROID], 1, [Have Android Audio HAL?]))
++
+ #### EsounD support (optional) ####
+ 
+ AC_ARG_ENABLE([esound],
+@@ -1536,6 +1551,7 @@ AS_IF([test "x$HAVE_X11" = "x1"], ENABLE
+ AS_IF([test "x$HAVE_OSS_OUTPUT" = "x1"], ENABLE_OSS_OUTPUT=yes, ENABLE_OSS_OUTPUT=no)
+ AS_IF([test "x$HAVE_OSS_WRAPPER" = "x1"], ENABLE_OSS_WRAPPER=yes, ENABLE_OSS_WRAPPER=no)
+ AS_IF([test "x$HAVE_ALSA" = "x1"], ENABLE_ALSA=yes, ENABLE_ALSA=no)
++AS_IF([test "x$HAVE_ANDROID" = "x1"], ENABLE_ANDROID=yes, ENABLE_ANDROID=no)
+ AS_IF([test "x$HAVE_COREAUDIO" = "x1"], ENABLE_COREAUDIO=yes, ENABLE_COREAUDIO=no)
+ AS_IF([test "x$HAVE_SOLARIS" = "x1"], ENABLE_SOLARIS=yes, ENABLE_SOLARIS=no)
+ AS_IF([test "x$HAVE_WAVEOUT" = "x1"], ENABLE_WAVEOUT=yes, ENABLE_WAVEOUT=no)
+@@ -1598,6 +1614,7 @@ echo "
+     Enable OSS Wrapper:            ${ENABLE_OSS_WRAPPER}
+     Enable EsounD:                 ${ENABLE_ESOUND}
+     Enable Alsa:                   ${ENABLE_ALSA}
++    Enable Android Audio HAL:      ${ENABLE_ANDROID}
+     Enable CoreAudio:              ${ENABLE_COREAUDIO}
+     Enable Solaris:                ${ENABLE_SOLARIS}
+     Enable WaveOut:                ${ENABLE_WAVEOUT}
+Index: pulseaudio/src/Makefile.am
+===================================================================
+--- pulseaudio.orig/src/Makefile.am
++++ pulseaudio/src/Makefile.am
+@@ -1273,6 +1273,16 @@ modlibexec_LTLIBRARIES += \
+ 		module-alsa-source.la \
+ 		module-alsa-card.la
+ 
++if HAVE_ANDROID
++modlibexec_LTLIBRARIES += \
++		libdroid-util.la \
++		libdroid-sink.la \
++		libdroid-source.la \
++		module-droid-sink.la \
++		module-droid-source.la \
++		module-droid-card.la
++endif
++
+ dist_alsaprofilesets_DATA = \
+ 		modules/alsa/mixer/profile-sets/default.conf \
+ 		modules/alsa/mixer/profile-sets/force-speaker.conf \
+@@ -1543,6 +1553,13 @@ SYMDEF_FILES = \
+ 		module-filter-apply-symdef.h \
+ 		module-filter-heuristics-symdef.h
+ 
++if HAVE_ANDROID
++SYMDEF_FILES += \
++		module-droid-sink-symdef.h \
++		module-droid-source-symdef.h \
++		module-droid-card-symdef.h
++endif
++
+ if HAVE_ESOUND
+ SYMDEF_FILES += \
+ 		module-esound-protocol-tcp-symdef.h \
+@@ -1852,6 +1869,44 @@ libalsa_util_la_LIBADD += $(DBUS_LIBS)
+ libalsa_util_la_CFLAGS += $(DBUS_CFLAGS)
+ endif
+ 
++if HAVE_ANDROID
++libdroid_util_la_SOURCES = modules/droid/droid-util.c modules/droid/droid-util.h
++libdroid_util_la_LDFLAGS = -avoid-version
++libdroid_util_la_LIBADD = $(MODULE_LIBADD) $(LIBHARDWARE_LIBS)
++libdroid_util_la_CFLAGS = $(AM_CFLAGS) $(LIBHARDWARE_CFLAGS)
++
++libdroid_sink_la_SOURCES = modules/droid/droid-sink.c modules/droid/droid-sink.h
++libdroid_sink_la_LDFLAGS = -avoid-version
++libdroid_sink_la_LIBADD = $(MODULE_LIBADD) $(LIBHARDWARE_LIBS) libdroid-util.la
++libdroid_sink_la_CFLAGS = $(AM_CFLAGS) $(LIBHARDWARE_CFLAGS)
++
++libdroid_source_la_SOURCES = modules/droid/droid-source.c modules/droid/droid-source.h
++libdroid_source_la_LDFLAGS = -avoid-version
++libdroid_source_la_LIBADD = $(MODULE_LIBADD) $(LIBHARDWARE_LIBS) libdroid-util.la
++libdroid_source_la_CFLAGS = $(AM_CFLAGS) $(LIBHARDWARE_CFLAGS)
++
++module_droid_sink_la_SOURCES = modules/droid/module-droid-sink.c
++module_droid_sink_la_LDFLAGS = $(MODULE_LDFLAGS)
++module_droid_sink_la_LIBADD = $(MODULE_LIBADD) $(LIBHARDWARE_LIBS) libdroid-util.la libdroid-sink.la
++module_droid_sink_la_CFLAGS = $(AM_CFLAGS) $(LIBHARDWARE_CFLAGS)
++
++module_droid_source_la_SOURCES = modules/droid/module-droid-source.c
++module_droid_source_la_LDFLAGS = $(MODULE_LDFLAGS)
++module_droid_source_la_LIBADD = $(MODULE_LIBADD) $(LIBHARDWARE_LIBS) libdroid-util.la libdroid-source.la
++module_droid_source_la_CFLAGS = $(AM_CFLAGS) $(LIBHARDWARE_CFLAGS)
++
++module_droid_card_la_SOURCES = modules/droid/module-droid-card.c
++module_droid_card_la_LDFLAGS = $(MODULE_LDFLAGS)
++module_droid_card_la_LIBADD = $(MODULE_LIBADD) $(LIBHARDWARE_LIBS) libdroid-util.la libdroid-sink.la libdroid-source.la
++module_droid_card_la_CFLAGS = $(AM_CFLAGS) $(LIBHARDWARE_CFLAGS)
++
++if HAVE_UDEV
++module_droid_card_la_SOURCES += modules/droid/droid-extcon.c modules/droid/droid-extcon.h
++module_droid_card_la_LIBADD += $(UDEV_LIBS)
++module_droid_card_la_CFLAGS += $(UDEV_CFLAGS)
++endif
++endif
++
+ module_alsa_sink_la_SOURCES = modules/alsa/module-alsa-sink.c
+ module_alsa_sink_la_LDFLAGS = $(MODULE_LDFLAGS)
+ module_alsa_sink_la_LIBADD = $(MODULE_LIBADD) $(ASOUNDLIB_LIBS) libalsa-util.la
+Index: pulseaudio/src/modules/droid/droid-extcon.c
+===================================================================
+--- /dev/null
++++ pulseaudio/src/modules/droid/droid-extcon.c
+@@ -0,0 +1,269 @@
++/***
++  This file is part of PulseAudio.
++
++  Copyright (C) 2013 Canonical Ltd.
++  Contact: David Henningsson
++           Ricardo Salveti de Araujo <ricardo.salveti@canonical.com>
++
++  PulseAudio is free software; you can redistribute it and/or modify
++  it under the terms of the GNU Lesser General Public License as published
++  by the Free Software Foundation; either version 2.1 of the License,
++  or (at your option) any later version.
++
++  PulseAudio is distributed in the hope that it will be useful, but
++  WITHOUT ANY WARRANTY; without even the implied warranty of
++  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
++  General Public License for more details.
++
++  You should have received a copy of the GNU Lesser General Public License
++  along with PulseAudio; if not, write to the Free Software
++  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
++  USA.
++***/
++
++#ifdef HAVE_CONFIG_H
++#include <config.h>
++#endif
++
++#include <pulsecore/core-util.h>
++#include <pulsecore/device-port.h>
++#include <pulsecore/i18n.h>
++#include <libudev.h>
++
++#include "droid-extcon.h"
++
++/* For android */
++#define EXTCON_NAME "switch"
++
++/* TODO: Backport stuff to 4.0, remove before upstreaming */
++#ifndef PA_PORT_AVAILABLE_YES
++#define PA_PORT_AVAILABLE_YES PA_AVAILABLE_YES
++#define PA_PORT_AVAILABLE_NO PA_AVAILABLE_NO
++#define PA_PORT_AVAILABLE_UNKNOWN PA_AVAILABLE_UNKNOWN
++#define pa_port_available_t pa_available_t
++#endif
++
++static pa_port_available_t hponly_avail(int state)
++{
++    return (state & 2) ? PA_PORT_AVAILABLE_YES : PA_PORT_AVAILABLE_NO;
++}
++
++static pa_port_available_t hsmic_avail(int state)
++{
++    return (state & 1) ? PA_PORT_AVAILABLE_YES : PA_PORT_AVAILABLE_NO;
++}
++
++struct droid_switch {
++    char *name;
++    uint32_t current_value;
++};
++
++static void droid_switch_free(struct droid_switch *as) {
++    if (!as)
++        return;
++    pa_xfree(as->name);
++    pa_xfree(as);
++}
++
++static struct droid_switch *droid_switch_new(const char *name) {
++
++    struct droid_switch *as = NULL;
++    char *filename = pa_sprintf_malloc("/sys/class/%s/%s/state", EXTCON_NAME, name);
++    char *state = pa_read_line_from_file(filename);
++
++    if (state == NULL) {
++        pa_log_debug("Cannot open '%s'. Skipping.", filename);
++        pa_xfree(filename);
++        return NULL;
++    }
++    pa_xfree(filename);
++
++    as = pa_xnew0(struct droid_switch, 1);
++    as->name = pa_xstrdup(name);
++
++    if (pa_atou(state, &as->current_value) < 0) {
++        pa_log_warn("Switch '%s' has invalid value '%s'", name, state);
++        pa_xfree(state);
++        droid_switch_free(as);
++        return NULL;
++    }
++    pa_log_debug("Switch '%s' opened with value '%s'", name, state);
++
++    return as;
++}
++
++struct udev_data {
++    struct udev *udev;
++    struct udev_monitor *monitor;
++    pa_io_event *event;
++};
++
++struct pa_droid_extcon {
++    pa_card *card;
++    struct droid_switch *h2w;
++    struct udev_data udev;
++};
++
++static struct droid_switch *find_matching_switch(pa_droid_extcon *u,
++                                                   const char *devpath) {
++
++    if (pa_streq(devpath, "/devices/virtual/" EXTCON_NAME "/h2w"))
++        return u->h2w;  /* To be extended if we ever support more switches */
++    return NULL;
++}
++
++static void notify_ports(pa_droid_extcon *u, struct droid_switch *as) {
++
++    pa_device_port *p;
++    void *state;
++
++    pa_assert(as == u->h2w); /* To be extended if we ever support more switches */
++
++    pa_log_debug("Value of switch %s is now %d.", as->name, as->current_value);
++
++    PA_HASHMAP_FOREACH(p, u->card->ports, state) {
++        if (p->direction == PA_DIRECTION_OUTPUT) {
++            if (!strcmp(p->name, "output-wired_headset"))
++                pa_device_port_set_available(p, hsmic_avail(as->current_value));
++            if (!strcmp(p->name, "output-wired_headphone"))
++                pa_device_port_set_available(p, hponly_avail(as->current_value));
++        }
++        if (p->direction == PA_DIRECTION_INPUT) {
++            if (!strcmp(p->name, "input-wired_headset"))
++                pa_device_port_set_available(p, hsmic_avail(as->current_value));
++        }
++    }
++}
++
++static void udev_cb(pa_mainloop_api *a, pa_io_event *e, int fd,
++                    pa_io_event_flags_t events, void *userdata) {
++
++    pa_droid_extcon *u = userdata;
++    struct udev_device *d = udev_monitor_receive_device(u->udev.monitor);
++    struct udev_list_entry *entry;
++    struct droid_switch *as;
++    const char *devpath, *state;
++
++    if (!d) {
++        pa_log("udev_monitor_receive_device failed.");
++        pa_assert(a);
++        a->io_free(u->udev.event);
++        u->udev.event = NULL;
++        return;
++    }
++
++    devpath = udev_device_get_devpath(d);
++    if (!devpath) {
++        pa_log("udev_device_get_devpath failed.");
++        goto out;
++    }
++    pa_log_debug("Got uevent with devpath=%s", devpath);
++
++    as = find_matching_switch(u, devpath);
++    if (!as)
++        goto out;
++
++    entry = udev_list_entry_get_by_name(
++            udev_device_get_properties_list_entry(d), "SWITCH_STATE");
++    if (!entry) {
++        pa_log("udev_list_entry_get_by_name failed to find 'SWITCH_STATE' entry.");
++        goto out;
++    }
++
++    state = udev_list_entry_get_value(entry);
++    if (!state) {
++        pa_log("udev_list_entry_get_by_name failed.");
++        goto out;
++    }
++
++    if (pa_atou(state, &as->current_value) < 0) {
++        pa_log_warn("Switch '%s' has invalid value '%s'", as->name, state);
++        goto out;
++    }
++
++    notify_ports(u, as);
++
++out:
++    udev_device_unref(d);
++}
++
++static bool init_udev(pa_droid_extcon *u, pa_core *core) {
++
++    int fd;
++
++    u->udev.udev = udev_new();
++    if (!u->udev.udev) {
++        pa_log("udev_new failed.");
++        return false;
++    }
++
++    u->udev.monitor = udev_monitor_new_from_netlink(u->udev.udev, "udev");
++    if (!u->udev.monitor) {
++        pa_log("udev_monitor_new_from_netlink failed.");
++        return false;
++    }
++
++    if (udev_monitor_filter_add_match_subsystem_devtype(u->udev.monitor, EXTCON_NAME, NULL) < 0) {
++        pa_log("udev_monitor_filter_add_match_subsystem_devtype failed.");
++        return false;
++    }
++
++    if (udev_monitor_enable_receiving(u->udev.monitor) < 0) {
++        pa_log("udev_monitor_enable_receiving failed.");
++        return false;
++    }
++
++    fd = udev_monitor_get_fd(u->udev.monitor);
++    if (fd < 0) {
++        pa_log("udev_monitor_get_fd failed");
++        return false;
++    }
++
++    pa_assert_se(u->udev.event = core->mainloop->io_new(core->mainloop, fd,
++                 PA_IO_EVENT_INPUT, udev_cb, u));
++
++    return true;
++}
++
++pa_droid_extcon *pa_droid_extcon_new(pa_core *core, pa_card *card) {
++
++    pa_droid_extcon *u = pa_xnew0(pa_droid_extcon, 1);
++
++    pa_assert(core);
++    pa_assert(card);
++
++    u->card = card;
++    u->h2w = droid_switch_new("h2w");
++    if (!u->h2w)
++        goto fail;
++
++    if (!init_udev(u, core))
++        goto fail;
++
++    notify_ports(u, u->h2w);
++
++    return u;
++
++fail:
++    pa_droid_extcon_free(u);
++    return NULL;
++}
++
++void pa_droid_extcon_free(pa_droid_extcon *u) {
++
++    pa_assert(u);
++
++    if (u->udev.event)
++        u->card->core->mainloop->io_free(u->udev.event);
++
++    if (u->udev.monitor)
++        udev_monitor_unref(u->udev.monitor);
++
++    if (u->udev.udev)
++        udev_unref(u->udev.udev);
++
++    if (u->h2w)
++        droid_switch_free(u->h2w);
++
++    pa_xfree(u);
++}
+Index: pulseaudio/src/modules/droid/droid-extcon.h
+===================================================================
+--- /dev/null
++++ pulseaudio/src/modules/droid/droid-extcon.h
+@@ -0,0 +1,32 @@
++#ifndef foodroidextconhfoo
++#define foodroidextconhfoo
++
++/***
++  This file is part of PulseAudio.
++
++  Copyright (C) 2013 Canonical Ltd.
++  Contact: David Henningsson
++
++  PulseAudio is free software; you can redistribute it and/or modify
++  it under the terms of the GNU Lesser General Public License as published
++  by the Free Software Foundation; either version 2.1 of the License,
++  or (at your option) any later version.
++
++  PulseAudio is distributed in the hope that it will be useful, but
++  WITHOUT ANY WARRANTY; without even the implied warranty of
++  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
++  General Public License for more details.
++
++  You should have received a copy of the GNU Lesser General Public License
++  along with PulseAudio; if not, write to the Free Software
++  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
++  USA.
++***/
++
++typedef struct pa_droid_extcon pa_droid_extcon;
++
++pa_droid_extcon *pa_droid_extcon_new(pa_core *, pa_card *);
++
++void pa_droid_extcon_free(pa_droid_extcon *);
++
++#endif
+Index: pulseaudio/src/modules/droid/droid-sink.c
+===================================================================
+--- /dev/null
++++ pulseaudio/src/modules/droid/droid-sink.c
+@@ -0,0 +1,1394 @@
++/*
++ * Copyright (C) 2013 Jolla Ltd.
++ * Copyright (C) 2010 Nokia Corporation.
++ *
++ * Contact: Juho Hämäläinen <juho.hamalainen@tieto.com>
++ *
++ * These PulseAudio Modules are free software; you can redistribute
++ * it and/or modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation
++ * version 2.1 of the License.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301
++ * USA.
++ */
++
++#ifdef HAVE_CONFIG_H
++#include <config.h>
++#endif
++
++#include <signal.h>
++#include <stdio.h>
++#define __STDC_FORMAT_MACROS
++#include <inttypes.h>
++
++#ifdef HAVE_VALGRIND_MEMCHECK_H
++#include <valgrind/memcheck.h>
++#endif
++
++#include <pulse/rtclock.h>
++#include <pulse/timeval.h>
++#include <pulse/volume.h>
++#include <pulse/xmalloc.h>
++
++#include <pulsecore/core.h>
++#include <pulsecore/i18n.h>
++#include <pulsecore/module.h>
++#include <pulsecore/memchunk.h>
++#include <pulsecore/sink.h>
++#include <pulsecore/modargs.h>
++#include <pulsecore/core-rtclock.h>
++#include <pulsecore/core-util.h>
++#include <pulsecore/sample-util.h>
++#include <pulsecore/log.h>
++#include <pulsecore/macro.h>
++#include <pulsecore/thread.h>
++#include <pulsecore/thread-mq.h>
++#include <pulsecore/rtpoll.h>
++#include <pulsecore/time-smoother.h>
++#include <pulsecore/hashmap.h>
++#include <pulsecore/core-subscribe.h>
++
++#include "droid-sink.h"
++#include "droid-util.h"
++
++struct userdata {
++    pa_core *core;
++    pa_module *module;
++    pa_card *card;
++    pa_sink *sink;
++
++    pa_thread *thread;
++    pa_thread_mq thread_mq;
++    pa_rtpoll *rtpoll;
++    int32_t routing_counter;
++    int32_t mute_routing_before;
++    int32_t mute_routing_after;
++
++    bool deferred_volume; /* TODO */
++
++    pa_memblockq *memblockq;
++    pa_memchunk silence;
++    size_t buffer_count;
++    size_t buffer_size;
++    pa_usec_t buffer_latency;
++    pa_usec_t timestamp;
++
++    audio_devices_t primary_devices;
++    audio_devices_t extra_devices;
++
++    bool use_hw_volume;
++    bool use_voice_volume;
++    bool voice_volume_call_mode;
++    bool voice_virtual_stream;
++    char *voice_property_key;
++    char *voice_property_value;
++    pa_sink_input *voice_virtual_sink_input;
++    pa_sink_input *voice_control_sink_input;
++    pa_subscription *sink_input_subscription;
++
++    pa_hook_slot *sink_input_put_hook_slot;
++    pa_hook_slot *sink_input_unlink_hook_slot;
++    pa_hook_slot *sink_proplist_changed_hook_slot;
++    pa_hashmap *parameters;
++
++    pa_droid_card_data *card_data;
++    pa_droid_hw_module *hw_module;
++    struct audio_stream_out *stream_out;
++
++    char *sco_fake_sink_name;
++    struct pa_sink *sco_fake_sink;
++};
++
++enum {
++    SINK_MESSAGE_DO_ROUTING = PA_SINK_MESSAGE_MAX,
++};
++
++#define DEFAULT_MODULE_ID "primary"
++
++/* sink properties */
++#define PROP_DROID_PARAMETER_PREFIX "droid.parameter."
++typedef struct droid_parameter_mapping {
++    char *key;
++    char *value;
++} droid_parameter_mapping;
++
++/* sink-input properties */
++#define PROP_DROID_ROUTE "droid.device.additional-route"
++
++/* Voice call volume control.
++ * With defaults defined below, whenever sink-input with proplist key "media.role" with
++ * value "phone" connects to the sink AND voice volume control is enabled, that connected
++ * sink-input's absolute volume is used for HAL voice volume. */
++#define DEFAULT_VOICE_CONTROL_PROPERTY_KEY      "media.role"
++#define DEFAULT_VOICE_CONTROL_PROPERTY_VALUE    "phone"
++
++/* While the HAL interface supports until 0, android just use up to ~0.05
++ * Lower values can crash the modem or cause mixer issues */
++#define VOICE_VOLUME_MIN_VALUE                  0.05
++
++/* Name of the fake sco sink used for HSP (used to set transport property) */
++#define DEFAULT_SCO_FAKE_SINK "sink.fake.sco"
++#define HSP_PREVENT_SUSPEND_STR "bluetooth.hsp.prevent.suspend.transport"
++
++static void userdata_free(struct userdata *u);
++static void set_voice_volume_from_input(struct userdata *u, pa_sink_input *i);
++static struct pa_sink *pa_sco_fake_sink_discover(pa_core *core, const char *sink_name);
++
++static void set_primary_devices(struct userdata *u, audio_devices_t devices) {
++    pa_assert(u);
++    pa_assert(devices);
++
++    u->primary_devices = devices;
++}
++
++static void add_extra_devices(struct userdata *u, audio_devices_t devices) {
++    pa_assert(u);
++    pa_assert(devices);
++
++    u->extra_devices |= devices;
++}
++
++static void remove_extra_devices(struct userdata *u, audio_devices_t devices) {
++    pa_assert(u);
++    pa_assert(devices);
++
++    u->extra_devices &= ~devices;
++}
++
++static void parameter_free(droid_parameter_mapping *m) {
++    pa_assert(m);
++
++    pa_xfree(m->key);
++    pa_xfree(m->value);
++    pa_xfree(m);
++}
++
++static void set_fake_sco_sink_transport_property(struct userdata *u, const char *value) {
++    pa_proplist *pl;
++
++    pa_assert(u);
++    pa_assert(value);
++    pa_assert(u->sco_fake_sink);
++
++    pl = pa_proplist_new();
++    pa_proplist_sets(pl, HSP_PREVENT_SUSPEND_STR, value);
++    pa_sink_update_proplist(u->sco_fake_sink, PA_UPDATE_REPLACE, pl);
++    pa_proplist_free(pl);
++}
++
++/* Called from main context during voice calls, and from IO context during media operation. */
++static bool do_routing(struct userdata *u) {
++    audio_devices_t routing;
++    char tmp[32];
++
++    pa_assert(u);
++    pa_assert(u->stream_out);
++
++    routing = u->primary_devices | u->extra_devices;
++
++    pa_snprintf(tmp, sizeof(tmp), "%s=%u;", AUDIO_PARAMETER_STREAM_ROUTING, routing);
++    pa_log_debug("Routing: set_parameters(): %s (%#010x)", tmp, routing);
++    pa_droid_hw_module_lock(u->hw_module);
++    u->stream_out->common.set_parameters(&u->stream_out->common, tmp);
++    pa_droid_hw_module_unlock(u->hw_module);
++
++    return true;
++}
++
++static bool parse_device_list(const char *str, audio_devices_t *dst) {
++    char *dev;
++    const char *state = NULL;
++
++    pa_assert(str);
++    pa_assert(dst);
++
++    *dst = 0;
++
++    while ((dev = pa_split(str, "|", &state))) {
++        audio_devices_t d;
++
++        if (!pa_string_convert_output_device_str_to_num(dev, &d)) {
++            pa_log_warn("Unknown device %s", dev);
++            pa_xfree(dev);
++            return false;
++        }
++
++        *dst |= d;
++
++        pa_xfree(dev);
++    }
++
++    return true;
++}
++
++static int thread_write_silence(struct userdata *u) {
++    const void *p;
++    ssize_t wrote;
++
++    /* Drop our rendered audio and write silence to HAL. */
++    pa_memblockq_drop(u->memblockq, u->buffer_size);
++
++    /* We should be able to write everything in one go as long as memblock size
++     * is multiples of buffer_size. Even if we don't write whole buffer size
++     * here it's okay, as long as mute time isn't configured too strictly. */
++
++    p = pa_memblock_acquire(u->silence.memblock);
++    wrote = u->stream_out->write(u->stream_out, (const uint8_t*) p + u->silence.index, u->silence.length);
++    pa_memblock_release(u->silence.memblock);
++
++    if (wrote < 0)
++        return -1;
++
++    return 0;
++}
++
++static int thread_write(struct userdata *u) {
++    pa_memchunk c;
++    const void *p;
++    ssize_t wrote;
++
++    pa_memblockq_peek_fixed_size(u->memblockq, u->buffer_size, &c);
++
++    /* We should be able to write everything in one go as long as memblock size
++     * is multiples of buffer_size. */
++
++    for (;;) {
++        p = pa_memblock_acquire(c.memblock);
++        wrote = u->stream_out->write(u->stream_out, (const uint8_t*) p + c.index, c.length);
++        pa_memblock_release(c.memblock);
++
++        if (wrote < 0) {
++            pa_memblockq_drop(u->memblockq, c.length);
++            pa_memblock_unref(c.memblock);
++            return -1;
++        }
++
++        if (wrote < (ssize_t) c.length) {
++            c.index += wrote;
++            c.length -= wrote;
++            continue;
++        }
++
++        pa_memblockq_drop(u->memblockq, c.length);
++        pa_memblock_unref(c.memblock);
++
++        break;
++    }
++
++    return 0;
++}
++static void thread_render(struct userdata *u) {
++    size_t length;
++    size_t missing;
++
++    length = pa_memblockq_get_length(u->memblockq);
++    missing = u->buffer_size * u->buffer_count - length;
++
++    if (missing > 0) {
++        pa_memchunk c;
++        pa_sink_render_full(u->sink, missing, &c);
++        pa_memblockq_push_align(u->memblockq, &c);
++        pa_memblock_unref(c.memblock);
++    }
++}
++
++static void process_rewind(struct userdata *u) {
++    size_t rewind_nbytes;
++    size_t max_rewind_nbytes;
++    size_t queue_length;
++
++    pa_assert(u);
++
++    if (u->sink->thread_info.rewind_nbytes == 0) {
++        pa_sink_process_rewind(u->sink, 0);
++        return;
++    }
++
++    rewind_nbytes = u->sink->thread_info.rewind_nbytes;
++    u->sink->thread_info.rewind_nbytes = 0;
++
++    pa_assert(rewind_nbytes > 0);
++    pa_log_debug("Requested to rewind %lu bytes.", (unsigned long) rewind_nbytes);
++
++    queue_length = pa_memblockq_get_length(u->memblockq);
++    if (queue_length <= u->buffer_size)
++        goto do_nothing;
++    max_rewind_nbytes = queue_length - u->buffer_size;
++    if (max_rewind_nbytes == 0)
++        goto do_nothing;
++
++    if (rewind_nbytes > max_rewind_nbytes)
++        rewind_nbytes = max_rewind_nbytes;
++
++    pa_memblockq_drop(u->memblockq, rewind_nbytes);
++
++    pa_sink_process_rewind(u->sink, rewind_nbytes);
++
++    pa_log_debug("Rewound %lu bytes.", (unsigned long) rewind_nbytes);
++    return;
++
++do_nothing:
++    pa_log_debug("Rewound 0 bytes.");
++    pa_sink_process_rewind(u->sink, 0);
++}
++
++static void thread_func(void *userdata) {
++    struct userdata *u = userdata;
++
++    pa_assert(u);
++
++    pa_log_debug("Thread starting up.");
++
++    if (u->core->realtime_scheduling)
++        pa_make_realtime(u->core->realtime_priority);
++
++    pa_thread_mq_install(&u->thread_mq);
++
++    u->timestamp = 0;
++
++    for (;;) {
++        int ret;
++
++        if (PA_SINK_IS_OPENED(u->sink->thread_info.state)) {
++
++            u->timestamp = pa_rtclock_now();
++
++            if (PA_UNLIKELY(u->sink->thread_info.rewind_requested))
++                process_rewind(u);
++            else
++                thread_render(u);
++
++            if (pa_rtpoll_timer_elapsed(u->rtpoll)) {
++                pa_usec_t now, sleept;
++
++                if (u->routing_counter == u->mute_routing_after) {
++                    do_routing(u);
++                    u->routing_counter--;
++                } else if (u->routing_counter > -1) {
++                    thread_write_silence(u);
++                    u->routing_counter--;
++                } else
++                    thread_write(u);
++
++                now = pa_rtclock_now();
++
++                if (now - u->timestamp > u->buffer_latency / 2)
++                    sleept = 0;
++                else
++                    sleept = u->buffer_latency / 2 - (now - u->timestamp) ;
++
++                pa_rtpoll_set_timer_relative(u->rtpoll, sleept);
++            }
++        } else
++            pa_rtpoll_set_timer_disabled(u->rtpoll);
++
++        /* Sleep */
++        if ((ret = pa_rtpoll_run(u->rtpoll)) < 0)
++            goto fail;
++
++        if (ret == 0)
++            goto finish;
++    }
++
++fail:
++    /* If this was no regular exit from the loop we have to continue
++     * processing messages until we received PA_MESSAGE_SHUTDOWN */
++    pa_asyncmsgq_post(u->thread_mq.outq, PA_MSGOBJECT(u->core), PA_CORE_MESSAGE_UNLOAD_MODULE, u->module, 0, NULL, NULL);
++    pa_asyncmsgq_wait_for(u->thread_mq.inq, PA_MESSAGE_SHUTDOWN);
++
++finish:
++    pa_log_debug("Thread shutting down.");
++}
++
++/* Called from IO context */
++static int suspend(struct userdata *u) {
++    int ret;
++    size_t length;
++
++    pa_assert(u);
++    pa_assert(u->sink);
++    pa_assert(u->stream_out);
++
++    ret = u->stream_out->common.standby(&u->stream_out->common);
++
++    if (ret == 0) {
++        pa_sink_set_max_request_within_thread(u->sink, 0);
++        pa_log_info("Device suspended.");
++    } else
++        pa_log("Couldn't set standby, err %d", ret);
++
++    /* Clear memblockq */
++    if ((length = pa_memblockq_get_length(u->memblockq)) > 0)
++        pa_memblockq_drop(u->memblockq, length);
++
++    return ret;
++}
++
++static int unsuspend(struct userdata *u) {
++    pa_assert(u);
++    pa_assert(u->sink);
++
++    /* HAL resumes automagically when writing to standby stream, but let's set max request */
++    pa_sink_set_max_request_within_thread(u->sink, u->buffer_size);
++
++    pa_log_info("Resuming...");
++
++    return 0;
++}
++
++/* Called from IO context */
++static int sink_process_msg(pa_msgobject *o, int code, void *data, int64_t offset, pa_memchunk *chunk) {
++    struct userdata *u = PA_SINK(o)->userdata;
++
++    switch (code) {
++        case SINK_MESSAGE_DO_ROUTING: {
++            /* When mute_routing_before & mute_routing_after are 0, routing change is done
++             * immediately when next round in thread_func. Otherwise write silence until
++             * counter equals mute_routing_after, execute routing, and write silence until
++             * routing_counter is 0. */
++            u->routing_counter = u->mute_routing_before + u->mute_routing_after;
++            return 0;
++        }
++
++        case PA_SINK_MESSAGE_GET_LATENCY: {
++            pa_usec_t r = 0;
++
++            /* HAL reports milliseconds */
++            if (u->stream_out)
++                r = u->stream_out->get_latency(u->stream_out) * PA_USEC_PER_MSEC * u->buffer_count;
++
++            *((pa_usec_t*) data) = r;
++
++            return 0;
++        }
++
++        case PA_SINK_MESSAGE_SET_STATE: {
++            switch ((pa_sink_state_t) PA_PTR_TO_UINT(data)) {
++                case PA_SINK_SUSPENDED: {
++                    int r;
++
++                    pa_assert(PA_SINK_IS_OPENED(u->sink->thread_info.state));
++
++                    if ((r = suspend(u)) < 0)
++                        return r;
++
++                    break;
++                }
++
++                case PA_SINK_IDLE:
++                    /* Fall through */
++                case PA_SINK_RUNNING: {
++                    int r;
++                    u->timestamp = 0;
++
++                    if (u->sink->thread_info.state == PA_SINK_SUSPENDED) {
++                        if ((r = unsuspend(u)) < 0)
++                            return r;
++                    }
++
++                    pa_rtpoll_set_timer_absolute(u->rtpoll, pa_rtclock_now());
++                    break;
++                }
++
++                /* not needed */
++                case PA_SINK_UNLINKED:
++                case PA_SINK_INIT:
++                case PA_SINK_INVALID_STATE:
++                    ;
++            }
++            break;
++        }
++    }
++
++    return pa_sink_process_msg(o, code, data, offset, chunk);
++}
++
++static int sink_set_port_cb(pa_sink *s, pa_device_port *p) {
++    struct userdata *u = s->userdata;
++    pa_droid_port_data *data;
++    const char *sco_transport_enabled;
++
++    pa_assert(u);
++    pa_assert(p);
++
++    data = PA_DEVICE_PORT_DATA(p);
++
++    if (!data->device) {
++        /* If there is no device defined, just return 0 to say everything is ok.
++         * Then next port change can be whatever sink port, even the one enabled
++         * before parking. */
++        pa_log_debug("Sink set port to parking");
++        return 0;
++    }
++
++    pa_log_debug("Sink set port %u", data->device);
++
++    set_primary_devices(u, data->device);
++
++    /* See if the sco fake sink element is available (only when needed) */
++    if ((u->sco_fake_sink == NULL) && (data->device & AUDIO_DEVICE_OUT_ALL_SCO))
++        u->sco_fake_sink = pa_sco_fake_sink_discover(u->core, u->sco_fake_sink_name);
++
++    /* Update the bluetooth hsp transport property before we do the routing */
++    if (u->sco_fake_sink) {
++        sco_transport_enabled = pa_proplist_gets(u->sco_fake_sink->proplist, HSP_PREVENT_SUSPEND_STR);
++        if (sco_transport_enabled && pa_streq(sco_transport_enabled, "true")) {
++            if (data->device & ~AUDIO_DEVICE_OUT_ALL_SCO)
++                set_fake_sco_sink_transport_property(u, "false");
++        } else if (data->device & AUDIO_DEVICE_OUT_ALL_SCO)
++            set_fake_sco_sink_transport_property(u, "true");
++    }
++
++    /* If we are in voice call, sink is usually in suspended state and routing change can be applied immediately.
++     * When in media use cases, do the routing change in IO thread. */
++    if (u->use_voice_volume)
++        do_routing(u);
++    else {
++        pa_asyncmsgq_post(u->sink->asyncmsgq, PA_MSGOBJECT(u->sink), SINK_MESSAGE_DO_ROUTING, NULL, 0, NULL, NULL);
++    }
++
++    return 0;
++}
++
++static void sink_set_volume_cb(pa_sink *s) {
++    struct userdata *u = s->userdata;
++    pa_cvolume r;
++
++    /* Shift up by the base volume */
++    pa_sw_cvolume_divide_scalar(&r, &s->real_volume, s->base_volume);
++
++    if (r.channels == 1) {
++        float val = pa_sw_volume_to_linear(r.values[0]);
++        pa_log_debug("Set hw volume %f", val);
++        pa_droid_hw_module_lock(u->hw_module);
++        if (u->stream_out->set_volume(u->stream_out, val, val) < 0)
++            pa_log_warn("Failed to set hw volume.");
++        pa_droid_hw_module_unlock(u->hw_module);
++    } else if (r.channels == 2) {
++        float val[2];
++        for (unsigned i = 0; i < 2; i++)
++            val[i] = pa_sw_volume_to_linear(r.values[i]);
++        pa_log_debug("Set hw volume %f : %f", val[0], val[1]);
++        pa_droid_hw_module_lock(u->hw_module);
++        if (u->stream_out->set_volume(u->stream_out, val[0], val[1]) < 0)
++            pa_log_warn("Failed to set hw volume.");
++        pa_droid_hw_module_unlock(u->hw_module);
++    }
++}
++
++/* Called from main context when set from input and from IO when set from sink volume. */
++static void set_voice_volume(struct userdata *u, pa_cvolume vol) {
++    float val;
++
++    pa_assert(u);
++
++    val = pa_sw_volume_to_linear(pa_cvolume_avg(&vol));
++
++    /* Make sure our lower value is still HAL compatible */
++    if (val < VOICE_VOLUME_MIN_VALUE) {
++        val = VOICE_VOLUME_MIN_VALUE;
++        pa_log_debug("Forcing minimal voice volume to %f", val);
++    }
++
++    pa_log_debug("Set voice volume %f", val);
++
++    pa_droid_hw_module_lock(u->hw_module);
++    if (u->hw_module->device->set_voice_volume(u->hw_module->device, val) < 0)
++        pa_log_warn("Failed to set voice volume.");
++    pa_droid_hw_module_unlock(u->hw_module);
++}
++
++static void sink_set_voice_volume_cb(pa_sink *s) {
++    struct userdata *u = s->userdata;
++    pa_cvolume r;
++
++    /* Shift up by the base volume */
++    pa_sw_cvolume_divide_scalar(&r, &s->real_volume, s->base_volume);
++
++    set_voice_volume(u, r);
++}
++
++/* Called from main thread */
++static void set_voice_volume_from_input(struct userdata *u, pa_sink_input *i) {
++    pa_cvolume vol;
++    float val;
++
++    pa_assert_ctl_context();
++    pa_assert(u);
++    pa_assert(i);
++
++    pa_sink_input_get_volume(i, &vol, true);
++
++    set_voice_volume(u, vol);
++}
++
++static void update_volumes(struct userdata *u) {
++    int ret = -1;
++
++    /* set_volume returns 0 if hw volume control is implemented, < 0 otherwise. */
++    pa_droid_hw_module_lock(u->hw_module);
++    if (u->stream_out->set_volume) {
++        pa_log_debug("Probe hw volume support for %s", u->sink->name);
++        pa_log_debug("Stream out volume set to 1.0f, 1.0f");
++        ret = u->stream_out->set_volume(u->stream_out, 1.0f, 1.0f);
++    }
++    pa_droid_hw_module_unlock(u->hw_module);
++
++    u->use_hw_volume = (ret == 0);
++
++    /* Apply callbacks */
++    pa_droid_sink_set_voice_control(u->sink, false);
++}
++
++static void set_sink_name(pa_modargs *ma, pa_sink_new_data *data, const char *module_id) {
++    const char *tmp;
++
++    pa_assert(ma);
++    pa_assert(data);
++
++    if ((tmp = pa_modargs_get_value(ma, "sink_name", NULL))) {
++        pa_sink_new_data_set_name(data, tmp);
++        data->namereg_fail = true;
++        pa_proplist_sets(data->proplist, PA_PROP_DEVICE_DESCRIPTION, "Droid sink");
++    } else {
++        char *tt;
++        pa_assert(module_id);
++        tt = pa_sprintf_malloc("sink.%s", module_id);
++        pa_sink_new_data_set_name(data, tt);
++        pa_xfree(tt);
++        data->namereg_fail = false;
++        pa_proplist_setf(data->proplist, PA_PROP_DEVICE_DESCRIPTION, "Droid sink %s", module_id);
++    }
++}
++
++/* Called from main thread */
++static pa_sink_input *find_volume_control_sink_input(struct userdata *u) {
++    const char *val;
++    uint32_t idx;
++    pa_sink_input *i;
++
++    pa_assert_ctl_context();
++    pa_assert(u);
++    pa_assert(u->sink);
++
++    PA_IDXSET_FOREACH(i, u->sink->inputs, idx) {
++        if ((val = pa_proplist_gets(i->proplist, u->voice_property_key))) {
++            if (pa_streq(val, u->voice_property_value)) {
++                return i;
++            }
++        }
++    }
++
++    return NULL;
++}
++
++/* Called from main thread */
++static void sink_input_subscription_cb(pa_core *c, pa_subscription_event_type_t t, uint32_t idx, struct userdata *u) {
++    pa_sink_input *i;
++
++    pa_assert_ctl_context();
++
++    if (t != (PA_SUBSCRIPTION_EVENT_SINK_INPUT | PA_SUBSCRIPTION_EVENT_NEW) &&
++        t != (PA_SUBSCRIPTION_EVENT_SINK_INPUT | PA_SUBSCRIPTION_EVENT_CHANGE) &&
++        t != (PA_SUBSCRIPTION_EVENT_SINK_INPUT | PA_SUBSCRIPTION_EVENT_REMOVE))
++        return;
++
++    if (!(i = pa_idxset_get_by_index(c->sink_inputs, idx)))
++        return;
++
++    if (t == (PA_SUBSCRIPTION_EVENT_SINK_INPUT | PA_SUBSCRIPTION_EVENT_NEW)) {
++        if (!u->voice_control_sink_input && (i = find_volume_control_sink_input(u))) {
++            u->voice_control_sink_input = i;
++            set_voice_volume_from_input(u, i);
++        }
++    }
++    else if (t == (PA_SUBSCRIPTION_EVENT_SINK_INPUT | PA_SUBSCRIPTION_EVENT_CHANGE)) {
++        if (u->voice_control_sink_input == i)
++            set_voice_volume_from_input(u, i);
++    }
++    else if (t == (PA_SUBSCRIPTION_EVENT_SINK_INPUT | PA_SUBSCRIPTION_EVENT_REMOVE)) {
++        if (u->voice_control_sink_input == i)
++            u->voice_control_sink_input = NULL;
++    }
++}
++
++/* For voice virtual stream, based on meego-mainvolume */
++static void sink_input_kill_cb(pa_sink_input *i) {
++    struct userdata *u;
++
++    pa_sink_input_assert_ref(i);
++    pa_assert_se(u = i->userdata);
++
++    pa_sink_input_unlink(u->voice_virtual_sink_input);
++    pa_sink_input_unref(u->voice_virtual_sink_input);
++    u->voice_virtual_sink_input = NULL;
++}
++
++/* no-op */
++static int sink_input_pop_cb(pa_sink_input *i, size_t nbytes, pa_memchunk *chunk) {
++    return 0;
++}
++
++/* no-op */
++static void sink_input_process_rewind_cb(pa_sink_input *i, size_t nbytes) {
++}
++
++static void create_voice_virtual_stream(struct userdata *u) {
++    pa_sink_input_new_data data;
++
++    pa_assert(u);
++
++    if (!u->voice_virtual_stream || u->voice_virtual_sink_input)
++        return;
++
++    pa_sink_input_new_data_init(&data);
++
++    data.driver = __FILE__;
++    data.module = u->module;
++    pa_proplist_sets(data.proplist, PA_PROP_MEDIA_NAME, "Virtual Stream for Voice Volume Control (Droid)");
++    pa_proplist_sets(data.proplist, PA_PROP_MEDIA_ROLE, "phone");
++    pa_sink_input_new_data_set_sample_spec(&data, &u->core->default_sample_spec);
++    pa_sink_input_new_data_set_channel_map(&data, &u->core->default_channel_map);
++    data.flags = PA_SINK_INPUT_START_CORKED | PA_SINK_INPUT_NO_REMAP | PA_SINK_INPUT_NO_REMIX;
++
++    pa_sink_input_new(&u->voice_virtual_sink_input, u->module->core, &data);
++    pa_sink_input_new_data_done(&data);
++
++    if (!u->voice_virtual_sink_input) {
++        pa_log_warn("Failed to create virtual sink input.");
++        return;
++    }
++
++    u->voice_virtual_sink_input->userdata = u;
++    u->voice_virtual_sink_input->kill = sink_input_kill_cb;
++    u->voice_virtual_sink_input->pop = sink_input_pop_cb;
++    u->voice_virtual_sink_input->process_rewind = sink_input_process_rewind_cb;
++
++    pa_sink_input_put(u->voice_virtual_sink_input);
++
++    pa_log_debug("Created virtual sink input for voice call volume control.");
++}
++
++static void destroy_voice_virtual_stream(struct userdata *u) {
++    pa_assert(u);
++
++    if (!u->voice_virtual_sink_input)
++        return;
++
++    sink_input_kill_cb(u->voice_virtual_sink_input);
++
++    pa_log_debug("Removed virtual stream.");
++}
++
++/* Called from main thread */
++void pa_droid_sink_set_voice_control(pa_sink* sink, bool enable) {
++    pa_sink_input *i;
++    struct userdata *u;
++
++    pa_assert_ctl_context();
++    pa_assert(sink);
++
++    u = sink->userdata;
++    pa_assert(u);
++    pa_assert(u->sink == sink);
++
++    pa_log_debug("Set voice control - use_voice_volume: %d, enable: %d", u->use_voice_volume, enable);
++    if (u->use_voice_volume == enable)
++        return;
++
++    u->use_voice_volume = enable;
++
++    if (u->use_voice_volume) {
++        pa_log_debug("Using voice volume control for %s", u->sink->name);
++
++        if (u->voice_virtual_stream)
++            create_voice_virtual_stream(u);
++
++        if (u->voice_volume_call_mode) {
++            /* In this case we want the sink volume to directly map into the voice volume */
++            pa_log_debug("Sink volume is now controlling the voice volume for %s", u->sink->name);
++
++            /* First disable module-device-restore, as we don't want to save the voice volume
++             * as the default sink volume when restoring to the default mode */
++            pa_proplist_sets(u->sink->proplist, MODULE_DEVICE_RESTORE_SKIP_PROPERTY, "true");
++
++            /* Then map normal sink volume changes to voice call volume changes */
++            pa_sink_set_set_volume_callback(u->sink, sink_set_voice_volume_cb);
++        } else {
++            pa_sink_set_set_volume_callback(u->sink, NULL);
++
++            /* Susbcription tracking voice call volume control sink-input is set up when
++             * voice volume control is enabled. In case volume control sink-input has already
++             * connected to the sink, check for the sink-input here as well. */
++
++            if (!u->sink_input_subscription)
++                u->sink_input_subscription = pa_subscription_new(u->core,
++                                                                 PA_SUBSCRIPTION_MASK_SINK_INPUT,
++                                                                 (pa_subscription_cb_t) sink_input_subscription_cb,
++                                                                 u);
++
++            if ((i = find_volume_control_sink_input(u))) {
++                u->voice_control_sink_input = i;
++                set_voice_volume_from_input(u, i);
++            }
++        }
++    } else {
++        if (u->voice_virtual_stream)
++            destroy_voice_virtual_stream(u);
++
++        if (u->voice_volume_call_mode) {
++            /* Enable module-device-restore again now that we're back to !voicecall mode */
++            pa_proplist_unset(u->sink->proplist, MODULE_DEVICE_RESTORE_SKIP_PROPERTY);
++        }
++
++        if (u->sink_input_subscription) {
++            pa_subscription_free(u->sink_input_subscription);
++            u->sink_input_subscription = NULL;
++            u->voice_control_sink_input = NULL;
++        }
++
++        if (u->use_hw_volume) {
++            pa_log_debug("Using hardware volume control for %s", u->sink->name);
++            pa_sink_set_set_volume_callback(u->sink, sink_set_volume_cb);
++        } else {
++            pa_log_debug("Using software volume control for %s", u->sink->name);
++            pa_sink_set_set_volume_callback(u->sink, NULL);
++        }
++    }
++}
++
++/* When sink-input with proper proplist variable appears, do extra routing configuration
++ * for the lifetime of that sink-input. */
++static pa_hook_result_t sink_input_put_hook_cb(pa_core *c, pa_sink_input *sink_input, struct userdata *u) {
++    const char *dev_str;
++    const char *media_str;
++    audio_devices_t devices;
++
++    /* Dynamic routing changes do not apply during active voice call. */
++    if (u->use_voice_volume)
++        return PA_HOOK_OK;
++
++    if ((dev_str = pa_proplist_gets(sink_input->proplist, PROP_DROID_ROUTE))) {
++
++        /* Do not change routing for gstreamer pulsesink probe. Workaround for unnecessary routing changes when gst-plugin
++         * pulsesink connects to our sink. Not the best fix or the best place for a fix, but let's have this here
++         * for now anyway. */
++        if ((media_str = pa_proplist_gets(sink_input->proplist, PA_PROP_MEDIA_NAME)) && pa_streq(media_str, "pulsesink probe"))
++            return PA_HOOK_OK;
++
++        if (parse_device_list(dev_str, &devices) && devices) {
++
++            pa_log_debug("Add extra route %s (%u).", dev_str, devices);
++
++            add_extra_devices(u, devices);
++            /* post routing change */
++            pa_asyncmsgq_post(u->sink->asyncmsgq, PA_MSGOBJECT(u->sink), SINK_MESSAGE_DO_ROUTING, NULL, 0, NULL, NULL);
++        }
++    }
++
++    return PA_HOOK_OK;
++}
++
++/* Remove extra routing when sink-inputs disappear. */
++static pa_hook_result_t sink_input_unlink_hook_cb(pa_core *c, pa_sink_input *sink_input, struct userdata *u) {
++    const char *dev_str;
++    const char *media_str;
++    audio_devices_t devices;
++
++    /* Dynamic routing changes do not apply during active voice call. */
++    if (u->use_voice_volume)
++        return PA_HOOK_OK;
++
++    if ((dev_str = pa_proplist_gets(sink_input->proplist, PROP_DROID_ROUTE))) {
++
++        /* Do not change routing for gstreamer pulsesink probe. Workaround for unnecessary routing changes when gst-plugin
++         * pulsesink connects to our sink. Not the best fix or the best place for a fix, but let's have this here
++         * for now anyway. */
++        if ((media_str = pa_proplist_gets(sink_input->proplist, PA_PROP_MEDIA_NAME)) && pa_streq(media_str, "pulsesink probe"))
++            return PA_HOOK_OK;
++
++        if (parse_device_list(dev_str, &devices) && devices) {
++
++            pa_log_debug("Remove extra route %s (%u).", dev_str, devices);
++
++            remove_extra_devices(u, devices);
++            /* post routing change */
++            pa_asyncmsgq_post(u->sink->asyncmsgq, PA_MSGOBJECT(u->sink), SINK_MESSAGE_DO_ROUTING, NULL, 0, NULL, NULL);
++        }
++    }
++
++    return PA_HOOK_OK;
++}
++
++/* Watch for properties starting with droid.parameter. and translate them directly to
++ * HAL set_parameters() calls. */
++static pa_hook_result_t sink_proplist_changed_hook_cb(pa_core *c, pa_sink *sink, struct userdata *u) {
++    bool changed = false;
++    const char *pkey;
++    const char *key;
++    const char *value;
++    char *tmp;
++    void *state = NULL;
++    droid_parameter_mapping *parameter = NULL;
++
++    pa_assert(sink);
++    pa_assert(u);
++
++    if (u->sink != sink)
++        return PA_HOOK_OK;
++
++    while ((key = pa_proplist_iterate(sink->proplist, &state))) {
++        if (!pa_startswith(key, PROP_DROID_PARAMETER_PREFIX))
++            continue;
++
++        pkey = key + strlen(PROP_DROID_PARAMETER_PREFIX);
++        if (pkey[0] == '\0')
++            continue;
++
++        changed = false;
++
++        if (!(parameter = pa_hashmap_get(u->parameters, pkey))) {
++            parameter = pa_xnew0(droid_parameter_mapping, 1);
++            parameter->key = pa_xstrdup(pkey);
++            parameter->value = pa_xstrdup(pa_proplist_gets(sink->proplist, key));
++            pa_hashmap_put(u->parameters, parameter->key, parameter);
++            changed = true;
++        } else {
++            value = pa_proplist_gets(sink->proplist, key);
++            if (!pa_streq(parameter->value, value)) {
++                pa_xfree(parameter->value);
++                parameter->value = pa_xstrdup(value);
++                changed = true;
++            }
++        }
++
++        if (changed) {
++            pa_assert(parameter);
++            tmp = pa_sprintf_malloc("%s=%s;", parameter->key, parameter->value);
++            pa_log_debug("sink proplist changed: set_parameters(): %s", tmp);
++            pa_droid_hw_module_lock(u->hw_module);
++            u->stream_out->common.set_parameters(&u->stream_out->common, tmp);
++            pa_droid_hw_module_unlock(u->hw_module);
++            pa_xfree(tmp);
++        }
++    }
++
++    return PA_HOOK_OK;
++}
++
++static struct pa_sink *pa_sco_fake_sink_discover(pa_core *core, const char *sink_name) {
++    struct pa_sink *sink;
++    pa_idxset *idxset;
++    void *state = NULL;
++
++    pa_assert(core);
++    pa_assert(sink_name);
++    pa_assert_se((idxset = core->sinks));
++
++    while ((sink = pa_idxset_iterate(idxset, &state, NULL)) != NULL) {
++        if (pa_streq(sink_name, sink->name)) {
++            pa_log_debug("Found fake SCO sink '%s'", sink_name);
++            return sink;
++        }
++    }
++
++    return NULL;
++}
++
++pa_sink *pa_droid_sink_new(pa_module *m,
++                             pa_modargs *ma,
++                             const char *driver,
++                             pa_droid_card_data *card_data,
++                             audio_output_flags_t flags,
++                             pa_droid_mapping *am,
++                             pa_card *card) {
++
++    struct userdata *u = NULL;
++    bool deferred_volume = false;
++    bool voice_volume_call_mode = false;
++    bool voice_virtual_stream = false;
++    char *thread_name = NULL;
++    pa_sink_new_data data;
++    const char *module_id = NULL;
++    const char *tmp;
++    /* char *list = NULL; */
++    uint32_t alternate_sample_rate;
++    uint32_t sample_rate;
++    audio_devices_t dev_out;
++    pa_sample_spec sample_spec;
++    pa_channel_map channel_map;
++    bool namereg_fail = false;
++    uint32_t total_latency;
++    pa_droid_config_audio *config = NULL; /* Only used when sink is created without card */
++    int32_t mute_routing_before = 0;
++    int32_t mute_routing_after = 0;
++    uint32_t sink_buffer = 0;
++    int ret;
++
++    audio_format_t hal_audio_format = 0;
++    audio_channel_mask_t hal_channel_mask = 0;
++
++    pa_assert(m);
++    pa_assert(ma);
++    pa_assert(driver);
++
++    deferred_volume = m->core->deferred_volume;
++    if (pa_modargs_get_value_boolean(ma, "deferred_volume", &deferred_volume) < 0) {
++        pa_log("Failed to parse deferred_volume argument.");
++        goto fail;
++    }
++
++    if (card && am)
++        module_id = am->output->module->name;
++    else
++        module_id = pa_modargs_get_value(ma, "module_id", DEFAULT_MODULE_ID);
++
++    sample_spec = m->core->default_sample_spec;
++    channel_map = m->core->default_channel_map;
++
++    if (pa_modargs_get_sample_spec_and_channel_map(ma, &sample_spec, &channel_map, PA_CHANNEL_MAP_AIFF) < 0) {
++        pa_log("Failed to parse sample specification and channel map.");
++        goto fail;
++    }
++
++    alternate_sample_rate = m->core->alternate_sample_rate;
++    if (pa_modargs_get_alternate_sample_rate(ma, &alternate_sample_rate) < 0) {
++        pa_log("Failed to parse alternate sample rate.");
++        goto fail;
++    }
++
++    if ((pa_modargs_get_value_s32(ma, "mute_routing_before", &mute_routing_before) < 0) || mute_routing_before < 0) {
++        pa_log("Failed to parse mute_routing_before. Needs to be integer >= 0.");
++        goto fail;
++    }
++
++    if ((pa_modargs_get_value_s32(ma, "mute_routing_after", &mute_routing_after) < 0) || mute_routing_after < 0) {
++        pa_log("Failed to parse mute_routing_after. Needs to be integer >= 0.");
++        goto fail;
++    }
++
++    if (pa_modargs_get_value_u32(ma, "sink_buffer", &sink_buffer) < 0) {
++        pa_log("Failed to parse sink_buffer. Needs to be integer >= 0.");
++        goto fail;
++    }
++
++    if (pa_modargs_get_value_boolean(ma, "voice_volume_call_mode", &voice_volume_call_mode) < 0) {
++        pa_log("Failed to parse voice_volume_call_mode. Needs to be a boolean argument.");
++        goto fail;
++    }
++
++    if (pa_modargs_get_value_boolean(ma, "voice_virtual_stream", &voice_virtual_stream) < 0) {
++        pa_log("Failed to parse voice_virtual_stream. Needs to be a boolean argument.");
++        goto fail;
++    }
++
++    u = pa_xnew0(struct userdata, 1);
++    u->core = m->core;
++    u->module = m;
++    u->card = card;
++    u->deferred_volume = deferred_volume;
++    u->rtpoll = pa_rtpoll_new();
++    pa_thread_mq_init(&u->thread_mq, m->core->mainloop, u->rtpoll);
++    u->parameters = pa_hashmap_new_full(pa_idxset_string_hash_func, pa_idxset_string_compare_func, NULL, (pa_free_cb_t) parameter_free);
++    u->voice_volume_call_mode = voice_volume_call_mode;
++    u->voice_virtual_stream = voice_virtual_stream;
++    u->voice_property_key   = pa_xstrdup(pa_modargs_get_value(ma, "voice_property_key", DEFAULT_VOICE_CONTROL_PROPERTY_KEY));
++    u->voice_property_value = pa_xstrdup(pa_modargs_get_value(ma, "voice_property_value", DEFAULT_VOICE_CONTROL_PROPERTY_VALUE));
++    u->sco_fake_sink_name = pa_xstrdup(pa_modargs_get_value(ma, "sco_fake_sink", DEFAULT_SCO_FAKE_SINK));
++
++    if (card_data) {
++        u->card_data = card_data;
++        pa_assert(card);
++        pa_assert_se((u->hw_module = pa_droid_hw_module_get(u->core, NULL, card_data->module_id)));
++    } else {
++        /* Sink wasn't created from inside card module, so we'll need to open
++         * hw module ourselves.
++         * TODO some way to share hw module between other sinks/sources since
++         * opening same module from different places likely isn't a good thing. */
++
++        if (!(config = pa_droid_config_load(ma)))
++            goto fail;
++
++        /* Ownership of config transfers to hw_module if opening of hw module succeeds. */
++        if (!(u->hw_module = pa_droid_hw_module_get(u->core, config, module_id)))
++            goto fail;
++    }
++
++    if (!pa_convert_format(sample_spec.format, CONV_FROM_PA, &hal_audio_format)) {
++        pa_log("Sample spec format %u not supported.", sample_spec.format);
++        goto fail;
++    }
++
++    for (int i = 0; i < channel_map.channels; i++) {
++        audio_channel_mask_t c;
++        if (!pa_convert_output_channel(channel_map.map[i], CONV_FROM_PA, &c)) {
++            pa_log("Failed to convert channel map.");
++            goto fail;
++        }
++        hal_channel_mask |= c;
++    }
++
++    struct audio_config config_out = {
++        .sample_rate = sample_spec.rate,
++        .channel_mask = hal_channel_mask,
++        .format = hal_audio_format
++    };
++
++    /* Default routing */
++    dev_out = AUDIO_DEVICE_OUT_DEFAULT;
++
++    if ((tmp = pa_modargs_get_value(ma, "output_devices", NULL))) {
++        audio_devices_t tmp_dev;
++
++        if (parse_device_list(tmp, &tmp_dev) && tmp_dev)
++            dev_out = tmp_dev;
++
++        pa_log_debug("Set initial devices %s", tmp);
++    }
++
++    if (am)
++        flags = am->output->flags;
++
++    pa_droid_hw_module_lock(u->hw_module);
++    ret = u->hw_module->device->open_output_stream(u->hw_module->device,
++                                                   u->hw_module->stream_out_id++,
++                                                   dev_out,
++                                                   flags,
++                                                   &config_out,
++                                                   &u->stream_out);
++    pa_droid_hw_module_unlock(u->hw_module);
++
++    if (!u->stream_out) {
++        pa_log("Failed to open output stream. (errno %d)", ret);
++        goto fail;
++    }
++
++    if ((sample_rate = u->stream_out->common.get_sample_rate(&u->stream_out->common)) != sample_spec.rate) {
++        pa_log_warn("Requested sample rate %u but got %u instead.", sample_spec.rate, sample_rate);
++        sample_spec.rate = sample_rate;
++    }
++
++    u->buffer_size = u->stream_out->common.get_buffer_size(&u->stream_out->common);
++    if (sink_buffer) {
++        if (sink_buffer < u->buffer_size)
++            pa_log_warn("Requested buffer size %u less than HAL reported buffer size (%u).", sink_buffer, u->buffer_size);
++        else if (sink_buffer % u->buffer_size) {
++            uint32_t trunc = (sink_buffer / u->buffer_size) * u->buffer_size;
++            pa_log_warn("Requested buffer size %u not multiple of HAL buffer size (%u). Using buffer size %u", sink_buffer, u->buffer_size, trunc);
++            u->buffer_size = trunc;
++        } else {
++            pa_log_info("Using requested buffer size %u.", sink_buffer);
++            u->buffer_size = sink_buffer;
++        }
++    }
++
++    u->buffer_latency = pa_bytes_to_usec(u->buffer_size, &sample_spec);
++    /* Disable internal rewinding for now. */
++    u->buffer_count = 1;
++
++    pa_log_info("Created Android stream with device: %u flags: %u sample rate: %u channel mask: %u format: %u buffer size: %u",
++            dev_out,
++            flags,
++            sample_rate,
++            config_out.channel_mask,
++            config_out.format,
++            u->buffer_size);
++
++
++    u->mute_routing_before = mute_routing_before / u->buffer_size;
++    u->mute_routing_after = mute_routing_after / u->buffer_size;
++    if (u->mute_routing_before == 0 && mute_routing_before)
++        u->mute_routing_before = u->buffer_size;
++    if (u->mute_routing_after == 0 && mute_routing_after)
++        u->mute_routing_after = u->buffer_size;
++    if (u->mute_routing_before || u->mute_routing_after)
++        pa_log_debug("Mute playback when routing is changing, %u before and %u after.",
++                     u->mute_routing_before * u->buffer_size,
++                     u->mute_routing_after * u->buffer_size);
++    pa_silence_memchunk_get(&u->core->silence_cache, u->core->mempool, &u->silence, &sample_spec, u->buffer_size);
++    u->memblockq = pa_memblockq_new("droid-sink", 0, u->buffer_size * u->buffer_count, u->buffer_size * u->buffer_count, &sample_spec, 1, 0, 0, &u->silence);
++
++    pa_sink_new_data_init(&data);
++    data.driver = driver;
++    data.module = m;
++    data.card = card;
++
++    set_sink_name(ma, &data, module_id);
++    pa_proplist_sets(data.proplist, PA_PROP_DEVICE_CLASS, "sound");
++    pa_proplist_sets(data.proplist, PA_PROP_DEVICE_FORM_FACTOR, "internal");
++
++    /* We need to give pa_modargs_get_value_boolean() a pointer to a local
++     * variable instead of using &data.namereg_fail directly, because
++     * data.namereg_fail is a bitfield and taking the address of a bitfield
++     * variable is impossible. */
++    namereg_fail = data.namereg_fail;
++    if (pa_modargs_get_value_boolean(ma, "namereg_fail", &namereg_fail) < 0) {
++        pa_log("Failed to parse namereg_fail argument.");
++        pa_sink_new_data_done(&data);
++        goto fail;
++    }
++    data.namereg_fail = namereg_fail;
++
++    pa_sink_new_data_set_sample_spec(&data, &sample_spec);
++    pa_sink_new_data_set_channel_map(&data, &channel_map);
++    pa_sink_new_data_set_alternate_sample_rate(&data, alternate_sample_rate);
++
++    /*
++    if (!(list = pa_list_string_output_device(dev_out))) {
++        pa_log("Couldn't format device list string.");
++        goto fail;
++    }
++    pa_proplist_sets(data.proplist, PROP_DROID_DEVICES, list);
++    pa_xfree(list);
++
++    if (flags) {
++        if (!(list = pa_list_string_flags(flags))) {
++            pa_log("Couldn't format flag list string.");
++            goto fail;
++        }
++    } else
++        list = NULL;
++
++    pa_proplist_sets(data.proplist, PROP_DROID_FLAGS, list ? list : "");
++    pa_xfree(list);
++    */
++
++    if (am)
++        pa_droid_add_ports(data.ports, am, card);
++
++    u->sink = pa_sink_new(m->core, &data, PA_SINK_HARDWARE | PA_SINK_LATENCY | PA_SINK_FLAT_VOLUME);
++    pa_sink_new_data_done(&data);
++
++    if (!u->sink) {
++        pa_log("Failed to create sink.");
++        goto fail;
++    }
++
++    u->sink->userdata = u;
++
++    u->sink->parent.process_msg = sink_process_msg;
++
++    u->sink->set_port = sink_set_port_cb;
++
++    pa_sink_set_asyncmsgq(u->sink, u->thread_mq.inq);
++    pa_sink_set_rtpoll(u->sink, u->rtpoll);
++
++    /* Rewind internal memblockq */
++    pa_sink_set_max_rewind(u->sink, u->buffer_size * (u->buffer_count - 1));
++
++    thread_name = pa_sprintf_malloc("droid-sink-%s", module_id);
++    if (!(u->thread = pa_thread_new(thread_name, thread_func, u))) {
++        pa_log("Failed to create thread.");
++        goto fail;
++    }
++    pa_xfree(thread_name);
++    thread_name = NULL;
++
++    /* Latency consists of HAL latency + our memblockq latency */
++    total_latency = u->stream_out->get_latency(u->stream_out) + (uint32_t) pa_bytes_to_usec(u->buffer_size * u->buffer_count, &sample_spec);
++    pa_sink_set_fixed_latency(u->sink, total_latency);
++    pa_log_debug("Set fixed latency %lu usec", (unsigned long) pa_bytes_to_usec(total_latency, &sample_spec));
++    pa_sink_set_max_request(u->sink, u->buffer_size * u->buffer_count);
++
++    if (u->sink->active_port)
++        sink_set_port_cb(u->sink, u->sink->active_port);
++
++    /* Hooks to track appearance and disappearance of sink-inputs. */
++    /* Hook a little bit earlier and later than module-role-ducking. */
++    u->sink_input_put_hook_slot = pa_hook_connect(&m->core->hooks[PA_CORE_HOOK_SINK_INPUT_PUT], PA_HOOK_LATE+10,
++            (pa_hook_cb_t) sink_input_put_hook_cb, u);
++    u->sink_input_unlink_hook_slot = pa_hook_connect(&m->core->hooks[PA_CORE_HOOK_SINK_INPUT_UNLINK], PA_HOOK_EARLY-10,
++            (pa_hook_cb_t) sink_input_unlink_hook_cb, u);
++    u->sink_proplist_changed_hook_slot = pa_hook_connect(&m->core->hooks[PA_CORE_HOOK_SINK_PROPLIST_CHANGED], PA_HOOK_EARLY,
++            (pa_hook_cb_t) sink_proplist_changed_hook_cb, u);
++
++    update_volumes(u);
++
++    pa_sink_put(u->sink);
++
++    return u->sink;
++
++fail:
++    pa_xfree(thread_name);
++
++    if (config)
++        pa_xfree(config);
++
++    if (u)
++        userdata_free(u);
++
++    return NULL;
++}
++
++void pa_droid_sink_free(pa_sink *s) {
++    struct userdata *u;
++
++    pa_sink_assert_ref(s);
++    pa_assert_se(u = s->userdata);
++
++    userdata_free(u);
++}
++
++static void userdata_free(struct userdata *u) {
++
++    if (u->sink)
++        pa_sink_unlink(u->sink);
++
++    if (u->thread) {
++        pa_asyncmsgq_send(u->thread_mq.inq, NULL, PA_MESSAGE_SHUTDOWN, NULL, 0, NULL);
++        pa_thread_free(u->thread);
++    }
++
++    pa_thread_mq_done(&u->thread_mq);
++
++    if (u->sink_input_subscription)
++        pa_subscription_free(u->sink_input_subscription);
++
++    if (u->sink_input_put_hook_slot)
++        pa_hook_slot_free(u->sink_input_put_hook_slot);
++
++    if (u->sink_input_unlink_hook_slot)
++        pa_hook_slot_free(u->sink_input_unlink_hook_slot);
++
++    if (u->sink_proplist_changed_hook_slot)
++        pa_hook_slot_free(u->sink_proplist_changed_hook_slot);
++
++    if (u->sink)
++        pa_sink_unref(u->sink);
++
++    if (u->parameters)
++        pa_hashmap_free(u->parameters);
++
++    if (u->hw_module && u->stream_out) {
++        pa_droid_hw_module_lock(u->hw_module);
++        u->hw_module->device->close_output_stream(u->hw_module->device, u->stream_out);
++        pa_droid_hw_module_unlock(u->hw_module);
++    }
++
++    if (u->memblockq)
++        pa_memblockq_free(u->memblockq);
++
++    if (u->silence.memblock)
++        pa_memblock_unref(u->silence.memblock);
++
++    if (u->hw_module)
++        pa_droid_hw_module_unref(u->hw_module);
++
++    if (u->sco_fake_sink_name)
++        pa_xfree(u->sco_fake_sink_name);
++
++    if (u->voice_property_key)
++        pa_xfree(u->voice_property_key);
++    if (u->voice_property_value)
++        pa_xfree(u->voice_property_value);
++
++    pa_xfree(u);
++}
+Index: pulseaudio/src/modules/droid/droid-sink.h
+===================================================================
+--- /dev/null
++++ pulseaudio/src/modules/droid/droid-sink.h
+@@ -0,0 +1,57 @@
++#ifndef foodroidsinkfoo
++#define foodroidsinkfoo
++
++/*
++ * Copyright (C) 2013 Jolla Ltd.
++ *
++ * Contact: Juho Hämäläinen <juho.hamalainen@tieto.com>
++ *
++ * These PulseAudio Modules are free software; you can redistribute
++ * it and/or modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation
++ * version 2.1 of the License.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301
++ * USA.
++ */
++
++#ifdef HAVE_CONFIG_H
++#include <config.h>
++#endif
++
++#ifdef HAVE_VALGRIND_MEMCHECK_H
++#include <valgrind/memcheck.h>
++#endif
++
++#include <pulse/xmalloc.h>
++
++#include <pulsecore/core.h>
++#include <pulsecore/i18n.h>
++#include <pulsecore/module.h>
++#include <pulsecore/sink.h>
++#include <pulsecore/modargs.h>
++#include <pulsecore/log.h>
++#include <pulsecore/macro.h>
++#include <pulsecore/card.h>
++
++#include "droid-util.h"
++
++pa_sink *pa_droid_sink_new(pa_module *m,
++                             pa_modargs *ma,
++                             const char *driver,
++                             pa_droid_card_data *card_data,
++                             audio_output_flags_t flags,
++                             pa_droid_mapping *am,
++                             pa_card *card);
++void pa_droid_sink_free(pa_sink *s);
++
++void pa_droid_sink_set_voice_control(pa_sink* sink, bool enable);
++
++#endif
+Index: pulseaudio/src/modules/droid/droid-source.c
+===================================================================
+--- /dev/null
++++ pulseaudio/src/modules/droid/droid-source.c
+@@ -0,0 +1,667 @@
++/*
++ * Copyright (C) 2013 Jolla Ltd.
++ *
++ * Contact: Juho Hämäläinen <juho.hamalainen@tieto.com>
++ *
++ * These PulseAudio Modules are free software; you can redistribute
++ * it and/or modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation
++ * version 2.1 of the License.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301
++ * USA.
++ */
++
++#ifdef HAVE_CONFIG_H
++#include <config.h>
++#endif
++
++#include <signal.h>
++#include <stdio.h>
++
++#ifdef HAVE_VALGRIND_MEMCHECK_H
++#include <valgrind/memcheck.h>
++#endif
++
++#include <pulse/rtclock.h>
++#include <pulse/timeval.h>
++#include <pulse/volume.h>
++#include <pulse/xmalloc.h>
++
++#include <pulsecore/core.h>
++#include <pulsecore/i18n.h>
++#include <pulsecore/module.h>
++#include <pulsecore/memchunk.h>
++#include <pulsecore/source.h>
++#include <pulsecore/modargs.h>
++#include <pulsecore/core-rtclock.h>
++#include <pulsecore/core-util.h>
++#include <pulsecore/sample-util.h>
++#include <pulsecore/log.h>
++#include <pulsecore/macro.h>
++#include <pulsecore/thread.h>
++#include <pulsecore/thread-mq.h>
++#include <pulsecore/rtpoll.h>
++#include <pulsecore/time-smoother.h>
++
++#include "droid-source.h"
++#include "droid-util.h"
++
++struct userdata {
++    pa_core *core;
++    pa_module *module;
++    pa_card *card;
++    pa_source *source;
++
++    pa_thread *thread;
++    pa_thread_mq thread_mq;
++    pa_rtpoll *rtpoll;
++
++    pa_memchunk memchunk;
++    audio_devices_t primary_devices;
++    audio_devices_t enabled_devices;
++    bool routing_changes_enabled;
++
++    size_t buffer_size;
++    pa_usec_t timestamp;
++
++    pa_droid_card_data *card_data;
++    pa_droid_hw_module *hw_module;
++    audio_stream_in_t *stream;
++};
++
++#define DEFAULT_MODULE_ID "primary"
++
++static void userdata_free(struct userdata *u);
++
++static bool do_routing(struct userdata *u, audio_devices_t devices) {
++    char tmp[32];
++    char *devlist;
++
++    pa_assert(u);
++    pa_assert(u->stream);
++
++    if (!u->routing_changes_enabled) {
++        pa_log_debug("Skipping routing change.");
++        return false;
++    }
++
++    if (u->primary_devices == devices)
++        pa_log_debug("Refresh active device routing.");
++
++    u->enabled_devices &= ~u->primary_devices;
++    u->primary_devices = devices;
++    u->enabled_devices |= u->primary_devices;
++
++    devlist = pa_list_string_input_device(devices);
++    pa_assert(devlist);
++#ifdef DROID_DEVICE_I9305
++    pa_snprintf(tmp, sizeof(tmp), "%s=%u", AUDIO_PARAMETER_STREAM_ROUTING, devices & ~AUDIO_DEVICE_BIT_IN);
++#else
++    pa_snprintf(tmp, sizeof(tmp), "%s=%u", AUDIO_PARAMETER_STREAM_ROUTING, devices);
++#endif
++    pa_log_debug("set_parameters(): %s (%s : %#010x)", tmp, devlist, devices);
++    pa_xfree(devlist);
++#ifdef DROID_DEVICE_MAKO
++#warning Using mako set_parameters hack.
++    u->card_data->set_parameters(u->card_data, tmp);
++#else
++    u->stream->common.set_parameters(&u->stream->common, tmp);
++#endif
++
++    return true;
++}
++
++static bool parse_device_list(const char *str, audio_devices_t *dst) {
++    char *dev;
++    const char *state = NULL;
++
++    pa_assert(str);
++    pa_assert(dst);
++
++    *dst = 0;
++
++    while ((dev = pa_split(str, "|", &state))) {
++        audio_devices_t d;
++
++        if (!pa_string_convert_input_device_str_to_num(dev, &d)) {
++            pa_log_warn("Unknown device %s", dev);
++            pa_xfree(dev);
++            return false;
++        }
++
++        *dst |= d;
++
++        pa_xfree(dev);
++    }
++
++    return true;
++}
++
++static int thread_read(struct userdata *u) {
++    void *p;
++    ssize_t readd;
++    pa_memchunk chunk;
++
++    chunk.memblock = pa_memblock_new(u->core->mempool, (size_t) u->buffer_size);
++
++    p = pa_memblock_acquire(chunk.memblock);
++    readd = u->stream->read(u->stream, (uint8_t*) p, pa_memblock_get_length(chunk.memblock));
++    pa_memblock_release(chunk.memblock);
++
++    if (readd < 0) {
++        pa_log("Failed to read from stream. (err %i)", readd);
++        goto end;
++    }
++
++    u->timestamp += pa_bytes_to_usec(readd, &u->source->sample_spec);
++
++    chunk.index = 0;
++    chunk.length = readd;
++
++    if (chunk.length > 0)
++        pa_source_post(u->source, &chunk);
++
++end:
++    pa_memblock_unref(chunk.memblock);
++
++    return 0;
++}
++
++static void thread_func(void *userdata) {
++    struct userdata *u = userdata;
++
++    pa_assert(u);
++
++    pa_log_debug("Thread starting up.");
++
++    if (u->core->realtime_scheduling)
++        pa_make_realtime(u->core->realtime_priority);
++
++    pa_thread_mq_install(&u->thread_mq);
++
++    u->timestamp = pa_rtclock_now();
++
++    for (;;) {
++        int ret;
++
++        if (PA_SOURCE_IS_OPENED(u->source->thread_info.state)) {
++            thread_read(u);
++
++            pa_rtpoll_set_timer_absolute(u->rtpoll, u->timestamp);
++        } else
++            pa_rtpoll_set_timer_disabled(u->rtpoll);
++
++        /* Sleep */
++        if ((ret = pa_rtpoll_run(u->rtpoll)) < 0)
++            goto fail;
++
++        if (ret == 0)
++            goto finish;
++
++    }
++
++fail:
++    /* If this was no regular exit from the loop we have to continue
++     * processing messages until we received PA_MESSAGE_SHUTDOWN */
++    pa_asyncmsgq_post(u->thread_mq.outq, PA_MSGOBJECT(u->core), PA_CORE_MESSAGE_UNLOAD_MODULE, u->module, 0, NULL, NULL);
++    pa_asyncmsgq_wait_for(u->thread_mq.inq, PA_MESSAGE_SHUTDOWN);
++
++finish:
++    pa_log_debug("Thread shutting down.");
++}
++
++/* Called from IO context */
++static int suspend(struct userdata *u) {
++    int ret;
++
++    pa_assert(u);
++    pa_assert(u->stream);
++
++    ret = u->stream->common.standby(&u->stream->common);
++
++    if (ret == 0)
++        pa_log_info("Device suspended.");
++
++    return ret;
++}
++
++/* Called from IO context */
++static int source_process_msg(pa_msgobject *o, int code, void *data, int64_t offset, pa_memchunk *chunk) {
++    struct userdata *u = PA_SOURCE(o)->userdata;
++
++    switch (code) {
++        case PA_SOURCE_MESSAGE_SET_STATE: {
++            switch ((pa_source_state_t) PA_PTR_TO_UINT(data)) {
++                case PA_SOURCE_SUSPENDED: {
++                    int r;
++
++                    pa_assert(PA_SOURCE_IS_OPENED(u->source->thread_info.state));
++
++                    if ((r = suspend(u)) < 0)
++                        return r;
++
++                    break;
++                }
++
++                case PA_SOURCE_IDLE:
++                    break;
++                case PA_SOURCE_RUNNING: {
++                    pa_log_info("Resuming...");
++                    u->timestamp = pa_rtclock_now();
++                    break;
++                }
++
++                /* not needed */
++                case PA_SOURCE_UNLINKED:
++                case PA_SOURCE_INIT:
++                case PA_SOURCE_INVALID_STATE:
++                    ;
++            }
++            break;
++        }
++    }
++
++    return pa_source_process_msg(o, code, data, offset, chunk);
++}
++
++static int source_set_port_cb(pa_source *s, pa_device_port *p) {
++    struct userdata *u = s->userdata;
++    pa_droid_port_data *data;
++
++    pa_assert(u);
++    pa_assert(p);
++
++    data = PA_DEVICE_PORT_DATA(p);
++
++    if (!data->device) {
++        /* If there is no device defined, just return 0 to say everything is ok.
++         * Then next port change can be whatever source port, even the one enabled
++         * before parking. */
++        pa_log_debug("Source set port to parking");
++        return 0;
++    }
++
++    pa_log_debug("Source set port %u", data->device);
++
++    do_routing(u, data->device);
++
++    return 0;
++}
++
++
++static void source_set_name(pa_modargs *ma, pa_source_new_data *data, const char *module_id) {
++    const char *tmp;
++
++    pa_assert(ma);
++    pa_assert(data);
++
++    if ((tmp = pa_modargs_get_value(ma, "source_name", NULL))) {
++        pa_source_new_data_set_name(data, tmp);
++        data->namereg_fail = true;
++        pa_proplist_sets(data->proplist, PA_PROP_DEVICE_DESCRIPTION, "Droid source");
++    } else {
++        char *tt;
++        pa_assert(module_id);
++        tt = pa_sprintf_malloc("source.%s", module_id);
++        pa_source_new_data_set_name(data, tt);
++        pa_xfree(tt);
++        data->namereg_fail = false;
++        pa_proplist_setf(data->proplist, PA_PROP_DEVICE_DESCRIPTION, "Droid source %s", module_id);
++    }
++}
++
++static void source_get_mute_cb(pa_source *s) {
++    struct userdata *u = s->userdata;
++    bool b;
++
++    pa_assert(u);
++    pa_assert(u->hw_module && u->hw_module->device);
++
++    pa_droid_hw_module_lock(u->hw_module);
++    if (u->hw_module->device->get_mic_mute(u->hw_module->device, &b) < 0) {
++        pa_log("Failed to get mute state.");
++        pa_droid_hw_module_unlock(u->hw_module);
++        return;
++    }
++    pa_droid_hw_module_unlock(u->hw_module);
++
++    s->muted = b;
++}
++
++static void source_set_mute_cb(pa_source *s) {
++    struct userdata *u = s->userdata;
++
++    pa_assert(u);
++    pa_assert(u->hw_module && u->hw_module->device);
++
++    pa_droid_hw_module_lock(u->hw_module);
++    if (u->hw_module->device->set_mic_mute(u->hw_module->device, s->muted) < 0)
++        pa_log("Failed to set mute state to %smuted.", s->muted ? "" : "un");
++    pa_droid_hw_module_unlock(u->hw_module);
++}
++
++static void source_set_mute_control(struct userdata *u) {
++    pa_assert(u);
++    pa_assert(u->hw_module && u->hw_module->device);
++
++    if (u->hw_module->device->set_mic_mute) {
++        pa_log_info("Using hardware mute control for %s", u->source->name);
++        pa_source_set_get_mute_callback(u->source, source_get_mute_cb);
++        pa_source_set_set_mute_callback(u->source, source_set_mute_cb);
++    } else {
++        pa_log_info("Using software mute control for %s", u->source->name);
++        pa_source_set_get_mute_callback(u->source, NULL);
++        pa_source_set_set_mute_callback(u->source, NULL);
++    }
++}
++
++void pa_droid_source_set_routing(pa_source *s, bool enabled) {
++    struct userdata *u = s->userdata;
++
++    pa_assert(s);
++    pa_assert(s->userdata);
++
++    if (u->routing_changes_enabled != enabled)
++        pa_log_debug("%s source routing changes.", enabled ? "Enabling" : "Disabling");
++    u->routing_changes_enabled = enabled;
++}
++
++pa_source *pa_droid_source_new(pa_module *m,
++                                 pa_modargs *ma,
++                                 const char *driver,
++                                 pa_droid_card_data *card_data,
++                                 pa_droid_mapping *am,
++                                 pa_card *card) {
++
++    struct userdata *u = NULL;
++    char *thread_name = NULL;
++    pa_source_new_data data;
++    const char *module_id = NULL;
++    /* const char *tmp; */
++    uint32_t sample_rate;
++    uint32_t alternate_sample_rate;
++    audio_devices_t dev_in;
++    pa_sample_spec sample_spec;
++    pa_channel_map channel_map;
++    bool namereg_fail = false;
++    pa_droid_config_audio *config = NULL; /* Only used when source is created without card */
++    uint32_t source_buffer = 0;
++    char audio_source[32];
++    int ret;
++
++    audio_format_t hal_audio_format = 0;
++    audio_channel_mask_t hal_channel_mask = 0;
++
++    pa_assert(m);
++    pa_assert(ma);
++    pa_assert(driver);
++
++    /* When running under card use hw module name for source by default. */
++    if (card && ma)
++        module_id = am->input->module->name;
++    else
++        module_id = pa_modargs_get_value(ma, "module_id", DEFAULT_MODULE_ID);
++
++    sample_spec = m->core->default_sample_spec;
++    channel_map = m->core->default_channel_map;
++
++    if (pa_modargs_get_sample_spec_and_channel_map(ma, &sample_spec, &channel_map, PA_CHANNEL_MAP_AIFF) < 0) {
++        pa_log("Failed to parse sample specification and channel map.");
++        goto fail;
++    }
++
++    alternate_sample_rate = m->core->alternate_sample_rate;
++    if (pa_modargs_get_alternate_sample_rate(ma, &alternate_sample_rate) < 0) {
++        pa_log("Failed to parse alternate sample rate.");
++        goto fail;
++    }
++
++    if (pa_modargs_get_value_u32(ma, "source_buffer", &source_buffer) < 0) {
++        pa_log("Failed to parse source_buffer. Needs to be integer >= 0.");
++        goto fail;
++    }
++
++    u = pa_xnew0(struct userdata, 1);
++    u->core = m->core;
++    u->module = m;
++    u->card = card;
++    u->rtpoll = pa_rtpoll_new();
++    pa_thread_mq_init(&u->thread_mq, m->core->mainloop, u->rtpoll);
++
++    /* Enabled routing changes by default. */
++    u->routing_changes_enabled = true;
++
++    if (card_data) {
++        pa_assert(card);
++        u->card_data = card_data;
++        pa_assert_se((u->hw_module = pa_droid_hw_module_get(u->core, NULL, card_data->module_id)));
++    } else {
++        /* Stand-alone source */
++
++        if (!(config = pa_droid_config_load(ma)))
++            goto fail;
++
++        /* Ownership of config transfers to hw_module if opening of hw module succeeds. */
++        if (!(u->hw_module = pa_droid_hw_module_get(u->core, config, module_id)))
++            goto fail;
++    }
++
++    if (!pa_convert_format(sample_spec.format, CONV_FROM_PA, &hal_audio_format)) {
++        pa_log("Sample spec format %u not supported.", sample_spec.format);
++        goto fail;
++    }
++
++    for (int i = 0; i < channel_map.channels; i++) {
++        audio_channel_mask_t c;
++        if (!pa_convert_input_channel(channel_map.map[i], CONV_FROM_PA, &c)) {
++            pa_log("Failed to convert channel map.");
++            goto fail;
++        }
++        hal_channel_mask |= c;
++    }
++
++    struct audio_config config_in = {
++        .sample_rate = sample_spec.rate,
++        .channel_mask = hal_channel_mask,
++        .format = hal_audio_format
++    };
++
++    /* Default routing */
++    /* FIXME So while setting routing through stream with HALv2 API fails, creation of stream
++     * requires HALv2 style device to work properly. So until that oddity is resolved we always
++     * set AUDIO_DEVICE_IN_BUILTIN_MIC as initial device here. */
++#if 0
++    pa_assert_se(pa_string_convert_input_device_str_to_num("AUDIO_DEVICE_IN_BUILTIN_MIC", &dev_in));
++
++    if ((tmp = pa_modargs_get_value(ma, "input_devices", NULL))) {
++        audio_devices_t tmp_dev;
++
++        if (parse_device_list(tmp, &tmp_dev) && tmp_dev)
++            dev_in = tmp_dev;
++
++        pa_log_debug("Set initial devices %s", tmp);
++    }
++#else
++    pa_log_info("FIXME: Setting AUDIO_DEVICE_IN_BUILTIN_MIC as initial device.");
++    dev_in = AUDIO_DEVICE_IN_BUILTIN_MIC;
++#endif
++    pa_droid_hw_module_lock(u->hw_module);
++    ret = u->hw_module->device->open_input_stream(u->hw_module->device,
++                                                  u->hw_module->stream_in_id,
++                                                  dev_in,
++                                                  &config_in,
++                                                  &u->stream);
++    /* On some devices the first call will fail if the config parameters are
++     * not supported, but it'll automatically set the right ones, expecting
++     * the caller to call it again, so let's try at least one more time */
++    if (!u->stream)
++        ret = u->hw_module->device->open_input_stream(u->hw_module->device,
++                                                      u->hw_module->stream_in_id,
++                                                      dev_in,
++                                                      &config_in,
++                                                      &u->stream);
++
++    u->hw_module->stream_in_id++;
++    pa_droid_hw_module_unlock(u->hw_module);
++
++    if (ret < 0) {
++        pa_log("Failed to open input stream.");
++        goto fail;
++    }
++
++    if ((sample_rate = u->stream->common.get_sample_rate(&u->stream->common)) != sample_spec.rate) {
++        pa_log_warn("Requested sample rate %u but got %u instead.", sample_spec.rate, sample_rate);
++        sample_spec.rate = sample_rate;
++    }
++
++    u->buffer_size = u->stream->common.get_buffer_size(&u->stream->common);
++    if (source_buffer) {
++        if (source_buffer < u->buffer_size)
++            pa_log_warn("Requested buffer size %u less than HAL reported buffer size (%u).", source_buffer, u->buffer_size);
++        else if (source_buffer % u->buffer_size) {
++            uint32_t trunc = (source_buffer / u->buffer_size) * u->buffer_size;
++            pa_log_warn("Requested buffer size %u not multiple of HAL buffer size (%u). Using buffer size %u", source_buffer, u->buffer_size, trunc);
++            u->buffer_size = trunc;
++        } else {
++            pa_log_info("Using requested buffer size %u.", source_buffer);
++            u->buffer_size = source_buffer;
++        }
++    }
++
++    pa_log_info("Created Android stream with device: %u sample rate: %u channel mask: %u format: %u buffer size: %u",
++            dev_in,
++            sample_rate,
++            config_in.channel_mask,
++            config_in.format,
++            u->buffer_size);
++
++    /* Setting audio source to MIC by default */
++    pa_snprintf(audio_source, sizeof(audio_source), "%s=%u", AUDIO_PARAMETER_STREAM_INPUT_SOURCE, AUDIO_SOURCE_MIC);
++    u->stream->common.set_parameters(&u->stream->common, audio_source);
++    pa_log_debug("Setting audio source to AUDIO_SOURCE_MIC by default");
++
++    pa_source_new_data_init(&data);
++    data.driver = driver;
++    data.module = m;
++    data.card = card;
++
++    source_set_name(ma, &data, module_id);
++
++    /* We need to give pa_modargs_get_value_boolean() a pointer to a local
++     * variable instead of using &data.namereg_fail directly, because
++     * data.namereg_fail is a bitfield and taking the address of a bitfield
++     * variable is impossible. */
++    namereg_fail = data.namereg_fail;
++    if (pa_modargs_get_value_boolean(ma, "namereg_fail", &namereg_fail) < 0) {
++        pa_log("Failed to parse namereg_fail argument.");
++        pa_source_new_data_done(&data);
++        goto fail;
++    }
++    data.namereg_fail = namereg_fail;
++
++    pa_source_new_data_set_sample_spec(&data, &sample_spec);
++    pa_source_new_data_set_channel_map(&data, &channel_map);
++    pa_source_new_data_set_alternate_sample_rate(&data, alternate_sample_rate);
++
++    if (am)
++        pa_droid_add_ports(data.ports, am, card);
++
++    u->source = pa_source_new(m->core, &data, PA_SOURCE_HARDWARE);
++    pa_source_new_data_done(&data);
++
++    if (!u->source) {
++        pa_log("Failed to create source.");
++        goto fail;
++    }
++
++    u->source->userdata = u;
++
++    u->source->parent.process_msg = source_process_msg;
++
++    source_set_mute_control(u);
++
++    u->source->set_port = source_set_port_cb;
++
++    pa_source_set_asyncmsgq(u->source, u->thread_mq.inq);
++    pa_source_set_rtpoll(u->source, u->rtpoll);
++
++    /* Disable rewind for droid source */
++    pa_source_set_max_rewind(u->source, 0);
++
++    thread_name = pa_sprintf_malloc("droid-source-%s", module_id);
++    if (!(u->thread = pa_thread_new(thread_name, thread_func, u))) {
++        pa_log("Failed to create thread.");
++        goto fail;
++    }
++    pa_xfree(thread_name);
++    thread_name = NULL;
++
++    pa_source_set_fixed_latency(u->source, pa_bytes_to_usec(u->buffer_size, &sample_spec));
++    pa_log_debug("Set fixed latency %" PRIu64 " usec", pa_bytes_to_usec(u->buffer_size, &sample_spec));
++
++    if (u->source->active_port)
++        source_set_port_cb(u->source, u->source->active_port);
++
++    pa_source_put(u->source);
++
++    return u->source;
++
++fail:
++    pa_xfree(thread_name);
++
++    if (config)
++        pa_xfree(config);
++
++    if (u)
++        userdata_free(u);
++
++    return NULL;
++}
++
++void pa_droid_source_free(pa_source *s) {
++    struct userdata *u;
++
++    pa_source_assert_ref(s);
++    pa_assert_se(u = s->userdata);
++
++    userdata_free(u);
++}
++
++static void userdata_free(struct userdata *u) {
++
++    if (u->source)
++        pa_source_unlink(u->source);
++
++    if (u->thread) {
++        pa_asyncmsgq_send(u->thread_mq.inq, NULL, PA_MESSAGE_SHUTDOWN, NULL, 0, NULL);
++        pa_thread_free(u->thread);
++    }
++
++    pa_thread_mq_done(&u->thread_mq);
++
++    if (u->source)
++        pa_source_unref(u->source);
++
++    if (u->memchunk.memblock)
++        pa_memblock_unref(u->memchunk.memblock);
++
++    if (u->hw_module && u->stream) {
++        pa_droid_hw_module_lock(u->hw_module);
++        u->hw_module->device->close_input_stream(u->hw_module->device, u->stream);
++        pa_droid_hw_module_unlock(u->hw_module);
++    }
++
++    // Stand alone source
++    if (u->hw_module)
++        pa_droid_hw_module_unref(u->hw_module);
++
++    pa_xfree(u);
++}
+Index: pulseaudio/src/modules/droid/droid-source.h
+===================================================================
+--- /dev/null
++++ pulseaudio/src/modules/droid/droid-source.h
+@@ -0,0 +1,56 @@
++#ifndef foodroidsourcefoo
++#define foodroidsourcefoo
++
++/*
++ * Copyright (C) 2013 Jolla Ltd.
++ *
++ * Contact: Juho Hämäläinen <juho.hamalainen@tieto.com>
++ *
++ * These PulseAudio Modules are free software; you can redistribute
++ * it and/or modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation
++ * version 2.1 of the License.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301
++ * USA.
++ */
++
++#ifdef HAVE_CONFIG_H
++#include <config.h>
++#endif
++
++#ifdef HAVE_VALGRIND_MEMCHECK_H
++#include <valgrind/memcheck.h>
++#endif
++
++#include <pulse/xmalloc.h>
++
++#include <pulsecore/core.h>
++#include <pulsecore/i18n.h>
++#include <pulsecore/module.h>
++#include <pulsecore/source.h>
++#include <pulsecore/modargs.h>
++#include <pulsecore/log.h>
++#include <pulsecore/macro.h>
++#include <pulsecore/card.h>
++
++#include "droid-util.h"
++
++pa_source *pa_droid_source_new(pa_module *m,
++                                 pa_modargs *ma,
++                                 const char *driver,
++                                 pa_droid_card_data *card_data,
++                                 pa_droid_mapping *am,
++                                 pa_card *card);
++void pa_droid_source_free(pa_source *s);
++
++void pa_droid_source_set_routing(pa_source *s, bool enabled);
++
++#endif
+Index: pulseaudio/src/modules/droid/droid-util-41qc.h
+===================================================================
+--- /dev/null
++++ pulseaudio/src/modules/droid/droid-util-41qc.h
+@@ -0,0 +1,274 @@
++/*
++ * Copyright (C) 2013 Jolla Ltd.
++ *
++ * Contact: Juho Hämäläinen <juho.hamalainen@tieto.com>
++ *
++ * These PulseAudio Modules are free software; you can redistribute
++ * it and/or modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation
++ * version 2.1 of the License.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301
++ * USA.
++ */
++
++#ifndef _ANDROID_UTIL_V412_H_
++#define _ANDROID_UTIL_V412_H_
++
++// PulseAudio value    -    Android value
++
++static uint32_t conversion_table_output_channel[][2] = {
++    { PA_CHANNEL_POSITION_MONO,                     AUDIO_CHANNEL_OUT_MONO },
++    { PA_CHANNEL_POSITION_FRONT_LEFT,               AUDIO_CHANNEL_OUT_FRONT_LEFT },
++    { PA_CHANNEL_POSITION_FRONT_RIGHT,              AUDIO_CHANNEL_OUT_FRONT_RIGHT},
++    { PA_CHANNEL_POSITION_FRONT_CENTER,             AUDIO_CHANNEL_OUT_FRONT_CENTER },
++    { PA_CHANNEL_POSITION_SUBWOOFER,                AUDIO_CHANNEL_OUT_LOW_FREQUENCY },
++    { PA_CHANNEL_POSITION_REAR_LEFT,                AUDIO_CHANNEL_OUT_BACK_LEFT },
++    { PA_CHANNEL_POSITION_REAR_RIGHT,               AUDIO_CHANNEL_OUT_BACK_RIGHT },
++    { PA_CHANNEL_POSITION_FRONT_LEFT_OF_CENTER,     AUDIO_CHANNEL_OUT_FRONT_LEFT_OF_CENTER },
++    { PA_CHANNEL_POSITION_FRONT_RIGHT_OF_CENTER,    AUDIO_CHANNEL_OUT_FRONT_RIGHT_OF_CENTER },
++    { PA_CHANNEL_POSITION_REAR_CENTER,              AUDIO_CHANNEL_OUT_BACK_CENTER },
++    { PA_CHANNEL_POSITION_SIDE_LEFT,                AUDIO_CHANNEL_OUT_SIDE_LEFT },
++    { PA_CHANNEL_POSITION_SIDE_RIGHT,               AUDIO_CHANNEL_OUT_SIDE_RIGHT },
++    { PA_CHANNEL_POSITION_TOP_CENTER,               AUDIO_CHANNEL_OUT_TOP_CENTER },
++    { PA_CHANNEL_POSITION_TOP_FRONT_LEFT,           AUDIO_CHANNEL_OUT_TOP_FRONT_LEFT },
++    { PA_CHANNEL_POSITION_TOP_FRONT_CENTER,         AUDIO_CHANNEL_OUT_TOP_FRONT_CENTER },
++    { PA_CHANNEL_POSITION_TOP_FRONT_RIGHT,          AUDIO_CHANNEL_OUT_TOP_FRONT_RIGHT },
++    { PA_CHANNEL_POSITION_TOP_REAR_LEFT,            AUDIO_CHANNEL_OUT_TOP_BACK_LEFT },
++    { PA_CHANNEL_POSITION_TOP_REAR_CENTER,          AUDIO_CHANNEL_OUT_TOP_BACK_CENTER },
++    { PA_CHANNEL_POSITION_TOP_REAR_RIGHT,           AUDIO_CHANNEL_OUT_TOP_BACK_RIGHT }
++};
++
++static uint32_t conversion_table_input_channel[][2] = {
++    { PA_CHANNEL_POSITION_MONO,                     AUDIO_CHANNEL_IN_MONO },
++    { PA_CHANNEL_POSITION_FRONT_LEFT,               AUDIO_CHANNEL_IN_LEFT },
++    { PA_CHANNEL_POSITION_FRONT_RIGHT,              AUDIO_CHANNEL_IN_RIGHT},
++    { PA_CHANNEL_POSITION_FRONT_CENTER,             AUDIO_CHANNEL_IN_FRONT },
++    { PA_CHANNEL_POSITION_REAR_CENTER,              AUDIO_CHANNEL_IN_BACK },
++    /* Following are missing suitable counterparts on PulseAudio side. */
++    { AUDIO_CHANNEL_IN_LEFT_PROCESSED,              AUDIO_CHANNEL_IN_LEFT_PROCESSED },
++    { AUDIO_CHANNEL_IN_RIGHT_PROCESSED,             AUDIO_CHANNEL_IN_RIGHT_PROCESSED },
++    { AUDIO_CHANNEL_IN_FRONT_PROCESSED,             AUDIO_CHANNEL_IN_FRONT_PROCESSED },
++    { AUDIO_CHANNEL_IN_BACK_PROCESSED,              AUDIO_CHANNEL_IN_BACK_PROCESSED },
++    { AUDIO_CHANNEL_IN_PRESSURE,                    AUDIO_CHANNEL_IN_PRESSURE },
++    { AUDIO_CHANNEL_IN_X_AXIS,                      AUDIO_CHANNEL_IN_X_AXIS },
++    { AUDIO_CHANNEL_IN_Y_AXIS,                      AUDIO_CHANNEL_IN_Y_AXIS },
++    { AUDIO_CHANNEL_IN_Z_AXIS,                      AUDIO_CHANNEL_IN_Z_AXIS },
++    { AUDIO_CHANNEL_IN_VOICE_UPLINK,                AUDIO_CHANNEL_IN_VOICE_UPLINK },
++    { AUDIO_CHANNEL_IN_VOICE_DNLINK,                AUDIO_CHANNEL_IN_VOICE_DNLINK }
++};
++
++static uint32_t conversion_table_format[][2] = {
++    { PA_SAMPLE_U8,             AUDIO_FORMAT_PCM_8_BIT },
++    { PA_SAMPLE_S16LE,          AUDIO_FORMAT_PCM_16_BIT },
++    { PA_SAMPLE_S32LE,          AUDIO_FORMAT_PCM_32_BIT },
++    { PA_SAMPLE_S24LE,          AUDIO_FORMAT_PCM_8_24_BIT }
++};
++
++struct string_conversion {
++    uint32_t value;
++    const char *str;
++};
++
++#if defined(STRING_ENTRY) || defined(STRING_ENTRY)
++#error STRING_ENTRY already defined somewhere, fix this lib.
++#endif
++#define STRING_ENTRY(str) { str, #str }
++/* Output devices */
++static struct string_conversion string_conversion_table_output_device[] = {
++    STRING_ENTRY(AUDIO_DEVICE_OUT_EARPIECE),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_SPEAKER),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_WIRED_HEADSET),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_WIRED_HEADPHONE),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_BLUETOOTH_SCO),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_BLUETOOTH_SCO_HEADSET),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_BLUETOOTH_SCO_CARKIT),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_BLUETOOTH_A2DP),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_BLUETOOTH_A2DP_HEADPHONES),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_BLUETOOTH_A2DP_SPEAKER),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_AUX_DIGITAL),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_ANLG_DOCK_HEADSET),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_DGTL_DOCK_HEADSET),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_USB_ACCESSORY),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_USB_DEVICE),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_FM),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_FM_TX),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_ANC_HEADSET),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_ANC_HEADPHONE),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_PROXY),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_ALL),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_ALL_A2DP),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_ALL_SCO),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_ALL_USB),
++    { 0, NULL }
++};
++
++static struct string_conversion string_conversion_table_output_device_fancy[] = {
++    { AUDIO_DEVICE_OUT_EARPIECE,                    "output-earpiece" },
++    { AUDIO_DEVICE_OUT_SPEAKER,                     "output-speaker" },
++    { AUDIO_DEVICE_OUT_SPEAKER
++        | AUDIO_DEVICE_OUT_WIRED_HEADPHONE,         "output-speaker+wired_headphone" },
++    { AUDIO_DEVICE_OUT_WIRED_HEADSET,               "output-wired_headset" },
++    { AUDIO_DEVICE_OUT_WIRED_HEADPHONE,             "output-wired_headphone" },
++    { AUDIO_DEVICE_OUT_BLUETOOTH_SCO,               "output-bluetooth_sco" },
++    { AUDIO_DEVICE_OUT_BLUETOOTH_SCO_HEADSET,       "output-sco_headset" },
++    { AUDIO_DEVICE_OUT_BLUETOOTH_SCO_CARKIT,        "output-sco_carkit" },
++    { AUDIO_DEVICE_OUT_BLUETOOTH_A2DP,              "output-a2dp" },
++    { AUDIO_DEVICE_OUT_BLUETOOTH_A2DP_HEADPHONES,   "output-a2dp_headphones" },
++    { AUDIO_DEVICE_OUT_BLUETOOTH_A2DP_SPEAKER,      "output-a2dp_speaker" },
++    { AUDIO_DEVICE_OUT_AUX_DIGITAL,                 "output-aux_digital" },
++    { AUDIO_DEVICE_OUT_ANLG_DOCK_HEADSET,           "output-analog_dock_headset" },
++    { AUDIO_DEVICE_OUT_DGTL_DOCK_HEADSET,           "output-digital_dock_headset" },
++    { AUDIO_DEVICE_OUT_USB_ACCESSORY,               "output-usb_accessory" },
++    { AUDIO_DEVICE_OUT_USB_DEVICE,                  "output-usb_device" },
++    { AUDIO_DEVICE_OUT_FM,                          "output-fm" },
++    { AUDIO_DEVICE_OUT_FM_TX,                       "output-fm_tx" },
++    { AUDIO_DEVICE_OUT_ANC_HEADSET,                 "output-anc_headset" },
++    { AUDIO_DEVICE_OUT_ANC_HEADPHONE,               "output-anc_headphone" },
++    { AUDIO_DEVICE_OUT_PROXY,                       "output-proxy" },
++    { 0, NULL }
++};
++
++/* Input devices */
++static struct string_conversion string_conversion_table_input_device[] = {
++    STRING_ENTRY(AUDIO_DEVICE_IN_COMMUNICATION),
++    STRING_ENTRY(AUDIO_DEVICE_IN_AMBIENT),
++    STRING_ENTRY(AUDIO_DEVICE_IN_BUILTIN_MIC),
++    STRING_ENTRY(AUDIO_DEVICE_IN_BLUETOOTH_SCO_HEADSET),
++    STRING_ENTRY(AUDIO_DEVICE_IN_WIRED_HEADSET),
++    STRING_ENTRY(AUDIO_DEVICE_IN_AUX_DIGITAL),
++    STRING_ENTRY(AUDIO_DEVICE_IN_VOICE_CALL),
++    STRING_ENTRY(AUDIO_DEVICE_IN_BACK_MIC),
++    STRING_ENTRY(AUDIO_DEVICE_IN_ANC_HEADSET),
++    STRING_ENTRY(AUDIO_DEVICE_IN_FM_RX),
++    STRING_ENTRY(AUDIO_DEVICE_IN_FM_RX_A2DP),
++    STRING_ENTRY(AUDIO_DEVICE_IN_PROXY),
++    { 0, NULL }
++};
++
++static struct string_conversion string_conversion_table_input_device_fancy[] = {
++    { AUDIO_DEVICE_IN_COMMUNICATION,            "input-in_communication" },
++    { AUDIO_DEVICE_IN_AMBIENT,                  "input-ambient" },
++    { AUDIO_DEVICE_IN_BUILTIN_MIC,              "input-builtin_mic" },
++    { AUDIO_DEVICE_IN_BLUETOOTH_SCO_HEADSET,    "input-bluetooth_sco_headset" },
++    { AUDIO_DEVICE_IN_WIRED_HEADSET,            "input-wired_headset" },
++    { AUDIO_DEVICE_IN_AUX_DIGITAL,              "input-aux_digital" },
++    { AUDIO_DEVICE_IN_VOICE_CALL,               "input-voice_call" },
++    { AUDIO_DEVICE_IN_BACK_MIC,                 "input-back_mic" },
++    { AUDIO_DEVICE_IN_ANC_HEADSET,              "input-anc_headset" },
++    { AUDIO_DEVICE_IN_FM_RX,                    "input-fm_rx" },
++    { AUDIO_DEVICE_IN_FM_RX_A2DP,               "input-fm_rx_a2dp" },
++    { AUDIO_DEVICE_IN_PROXY,                    "input-in_proxy" },
++    { 0, NULL }
++};
++
++/* Flags */
++static struct string_conversion string_conversion_table_flag[] = {
++    STRING_ENTRY(AUDIO_OUTPUT_FLAG_NONE),
++    STRING_ENTRY(AUDIO_OUTPUT_FLAG_DIRECT),
++    STRING_ENTRY(AUDIO_OUTPUT_FLAG_PRIMARY),
++    STRING_ENTRY(AUDIO_OUTPUT_FLAG_FAST),
++    STRING_ENTRY(AUDIO_OUTPUT_FLAG_DEEP_BUFFER),
++    /* Qualcomm flags */
++    STRING_ENTRY(AUDIO_OUTPUT_FLAG_LPA),
++    STRING_ENTRY(AUDIO_OUTPUT_FLAG_TUNNEL),
++    STRING_ENTRY(AUDIO_OUTPUT_FLAG_VOIP_RX),
++    { 0, NULL }
++};
++
++/* Channels */
++static struct string_conversion string_conversion_table_output_channels[] = {
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_FRONT_LEFT),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_FRONT_RIGHT),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_FRONT_CENTER),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_LOW_FREQUENCY),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_BACK_LEFT),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_BACK_RIGHT),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_FRONT_LEFT_OF_CENTER),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_FRONT_RIGHT_OF_CENTER),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_BACK_CENTER),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_SIDE_LEFT),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_SIDE_RIGHT),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_TOP_CENTER),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_TOP_FRONT_LEFT),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_TOP_FRONT_CENTER),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_TOP_FRONT_RIGHT),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_TOP_BACK_LEFT),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_TOP_BACK_CENTER),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_TOP_BACK_RIGHT),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_MONO),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_STEREO),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_QUAD),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_SURROUND),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_5POINT1),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_7POINT1),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_ALL),
++    { 0, NULL }
++};
++static struct string_conversion string_conversion_table_input_channels[] = {
++    STRING_ENTRY(AUDIO_CHANNEL_IN_LEFT),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_RIGHT),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_FRONT),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_BACK),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_LEFT_PROCESSED),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_RIGHT_PROCESSED),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_FRONT_PROCESSED),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_BACK_PROCESSED),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_PRESSURE),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_X_AXIS),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_Y_AXIS),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_Z_AXIS),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_VOICE_UPLINK),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_VOICE_DNLINK),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_MONO),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_STEREO),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_5POINT1),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_VOICE_UPLINK_MONO),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_VOICE_DNLINK_MONO),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_VOICE_CALL_MONO),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_ALL),
++    { 0, NULL }
++};
++
++/* Formats */
++static struct string_conversion string_conversion_table_format[] = {
++    STRING_ENTRY(AUDIO_FORMAT_DEFAULT),
++    STRING_ENTRY(AUDIO_FORMAT_PCM),
++    STRING_ENTRY(AUDIO_FORMAT_MP3),
++    STRING_ENTRY(AUDIO_FORMAT_AMR_NB),
++    STRING_ENTRY(AUDIO_FORMAT_AMR_WB),
++    STRING_ENTRY(AUDIO_FORMAT_AAC),
++    STRING_ENTRY(AUDIO_FORMAT_HE_AAC_V1),
++    STRING_ENTRY(AUDIO_FORMAT_HE_AAC_V2),
++    STRING_ENTRY(AUDIO_FORMAT_VORBIS),
++    STRING_ENTRY(AUDIO_FORMAT_EVRC),
++    STRING_ENTRY(AUDIO_FORMAT_QCELP),
++    STRING_ENTRY(AUDIO_FORMAT_AC3),
++    STRING_ENTRY(AUDIO_FORMAT_AC3_PLUS),
++    STRING_ENTRY(AUDIO_FORMAT_DTS),
++    STRING_ENTRY(AUDIO_FORMAT_WMA),
++    STRING_ENTRY(AUDIO_FORMAT_WMA_PRO),
++    STRING_ENTRY(AUDIO_FORMAT_AAC_ADIF),
++    STRING_ENTRY(AUDIO_FORMAT_EVRCB),
++    STRING_ENTRY(AUDIO_FORMAT_EVRCWB),
++    STRING_ENTRY(AUDIO_FORMAT_EAC3),
++    STRING_ENTRY(AUDIO_FORMAT_DTS_LBR),
++    STRING_ENTRY(AUDIO_FORMAT_AMR_WB_PLUS),
++    /* Currently we support only PCM formats, but keep all formats
++     * here so audio_policy.conf can be parsed. */
++    STRING_ENTRY(AUDIO_FORMAT_PCM_16_BIT),
++    STRING_ENTRY(AUDIO_FORMAT_PCM_8_BIT),
++    STRING_ENTRY(AUDIO_FORMAT_PCM_32_BIT),
++    STRING_ENTRY(AUDIO_FORMAT_PCM_8_24_BIT),
++    { 0, NULL }
++};
++#undef STRING_ENTRY
++
++#endif
+Index: pulseaudio/src/modules/droid/droid-util-42.h
+===================================================================
+--- /dev/null
++++ pulseaudio/src/modules/droid/droid-util-42.h
+@@ -0,0 +1,286 @@
++/*
++ * Copyright (C) 2013 Jolla Ltd.
++ *
++ * Contact: Juho Hämäläinen <juho.hamalainen@tieto.com>
++ *
++ * These PulseAudio Modules are free software; you can redistribute
++ * it and/or modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation
++ * version 2.1 of the License.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301
++ * USA.
++ */
++
++#ifndef _ANDROID_UTIL_V42_H_
++#define _ANDROID_UTIL_V42_H_
++
++#define HAL_V2
++
++// PulseAudio value    -    Android value
++
++static uint32_t conversion_table_output_channel[][2] = {
++    { PA_CHANNEL_POSITION_MONO,                     AUDIO_CHANNEL_OUT_MONO },
++    { PA_CHANNEL_POSITION_FRONT_LEFT,               AUDIO_CHANNEL_OUT_FRONT_LEFT },
++    { PA_CHANNEL_POSITION_FRONT_RIGHT,              AUDIO_CHANNEL_OUT_FRONT_RIGHT},
++    { PA_CHANNEL_POSITION_FRONT_CENTER,             AUDIO_CHANNEL_OUT_FRONT_CENTER },
++    { PA_CHANNEL_POSITION_SUBWOOFER,                AUDIO_CHANNEL_OUT_LOW_FREQUENCY },
++    { PA_CHANNEL_POSITION_REAR_LEFT,                AUDIO_CHANNEL_OUT_BACK_LEFT },
++    { PA_CHANNEL_POSITION_REAR_RIGHT,               AUDIO_CHANNEL_OUT_BACK_RIGHT },
++    { PA_CHANNEL_POSITION_FRONT_LEFT_OF_CENTER,     AUDIO_CHANNEL_OUT_FRONT_LEFT_OF_CENTER },
++    { PA_CHANNEL_POSITION_FRONT_RIGHT_OF_CENTER,    AUDIO_CHANNEL_OUT_FRONT_RIGHT_OF_CENTER },
++    { PA_CHANNEL_POSITION_REAR_CENTER,              AUDIO_CHANNEL_OUT_BACK_CENTER },
++    { PA_CHANNEL_POSITION_SIDE_LEFT,                AUDIO_CHANNEL_OUT_SIDE_LEFT },
++    { PA_CHANNEL_POSITION_SIDE_RIGHT,               AUDIO_CHANNEL_OUT_SIDE_RIGHT },
++    { PA_CHANNEL_POSITION_TOP_CENTER,               AUDIO_CHANNEL_OUT_TOP_CENTER },
++    { PA_CHANNEL_POSITION_TOP_FRONT_LEFT,           AUDIO_CHANNEL_OUT_TOP_FRONT_LEFT },
++    { PA_CHANNEL_POSITION_TOP_FRONT_CENTER,         AUDIO_CHANNEL_OUT_TOP_FRONT_CENTER },
++    { PA_CHANNEL_POSITION_TOP_FRONT_RIGHT,          AUDIO_CHANNEL_OUT_TOP_FRONT_RIGHT },
++    { PA_CHANNEL_POSITION_TOP_REAR_LEFT,            AUDIO_CHANNEL_OUT_TOP_BACK_LEFT },
++    { PA_CHANNEL_POSITION_TOP_REAR_CENTER,          AUDIO_CHANNEL_OUT_TOP_BACK_CENTER },
++    { PA_CHANNEL_POSITION_TOP_REAR_RIGHT,           AUDIO_CHANNEL_OUT_TOP_BACK_RIGHT }
++};
++
++static uint32_t conversion_table_input_channel[][2] = {
++    { PA_CHANNEL_POSITION_MONO,                     AUDIO_CHANNEL_IN_MONO },
++    { PA_CHANNEL_POSITION_FRONT_LEFT,               AUDIO_CHANNEL_IN_LEFT },
++    { PA_CHANNEL_POSITION_FRONT_RIGHT,              AUDIO_CHANNEL_IN_RIGHT},
++    { PA_CHANNEL_POSITION_FRONT_CENTER,             AUDIO_CHANNEL_IN_FRONT },
++    { PA_CHANNEL_POSITION_REAR_CENTER,              AUDIO_CHANNEL_IN_BACK },
++    /* Following are missing suitable counterparts on PulseAudio side. */
++    { AUDIO_CHANNEL_IN_LEFT_PROCESSED,              AUDIO_CHANNEL_IN_LEFT_PROCESSED },
++    { AUDIO_CHANNEL_IN_RIGHT_PROCESSED,             AUDIO_CHANNEL_IN_RIGHT_PROCESSED },
++    { AUDIO_CHANNEL_IN_FRONT_PROCESSED,             AUDIO_CHANNEL_IN_FRONT_PROCESSED },
++    { AUDIO_CHANNEL_IN_BACK_PROCESSED,              AUDIO_CHANNEL_IN_BACK_PROCESSED },
++    { AUDIO_CHANNEL_IN_PRESSURE,                    AUDIO_CHANNEL_IN_PRESSURE },
++    { AUDIO_CHANNEL_IN_X_AXIS,                      AUDIO_CHANNEL_IN_X_AXIS },
++    { AUDIO_CHANNEL_IN_Y_AXIS,                      AUDIO_CHANNEL_IN_Y_AXIS },
++    { AUDIO_CHANNEL_IN_Z_AXIS,                      AUDIO_CHANNEL_IN_Z_AXIS },
++    { AUDIO_CHANNEL_IN_VOICE_UPLINK,                AUDIO_CHANNEL_IN_VOICE_UPLINK },
++    { AUDIO_CHANNEL_IN_VOICE_DNLINK,                AUDIO_CHANNEL_IN_VOICE_DNLINK }
++};
++
++static uint32_t conversion_table_format[][2] = {
++    { PA_SAMPLE_U8,             AUDIO_FORMAT_PCM_8_BIT },
++    { PA_SAMPLE_S16LE,          AUDIO_FORMAT_PCM_16_BIT },
++    { PA_SAMPLE_S32LE,          AUDIO_FORMAT_PCM_32_BIT },
++    { PA_SAMPLE_S24LE,          AUDIO_FORMAT_PCM_8_24_BIT }
++};
++
++struct string_conversion {
++    uint32_t value;
++    const char *str;
++};
++
++#if defined(STRING_ENTRY)
++#error STRING_ENTRY already defined somewhere, fix this lib.
++#endif
++#define STRING_ENTRY(str) { str, #str }
++/* Output devices */
++static struct string_conversion string_conversion_table_output_device[] = {
++    STRING_ENTRY(AUDIO_DEVICE_OUT_EARPIECE),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_SPEAKER),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_WIRED_HEADSET),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_WIRED_HEADPHONE),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_BLUETOOTH_SCO),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_BLUETOOTH_SCO_HEADSET),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_BLUETOOTH_SCO_CARKIT),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_BLUETOOTH_A2DP),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_BLUETOOTH_A2DP_HEADPHONES),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_BLUETOOTH_A2DP_SPEAKER),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_AUX_DIGITAL),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_ANLG_DOCK_HEADSET),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_DGTL_DOCK_HEADSET),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_USB_ACCESSORY),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_USB_DEVICE),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_REMOTE_SUBMIX),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_ANC_HEADSET),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_ANC_HEADPHONE),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_PROXY),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_FM),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_FM_TX),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_SPDIF),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_DEFAULT),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_ALL),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_ALL_A2DP),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_ALL_SCO),
++    STRING_ENTRY(AUDIO_DEVICE_OUT_ALL_USB),
++    { 0, NULL }
++};
++
++static struct string_conversion string_conversion_table_output_device_fancy[] = {
++    { AUDIO_DEVICE_OUT_EARPIECE,                    "output-earpiece" },
++    { AUDIO_DEVICE_OUT_SPEAKER,                     "output-speaker" },
++    { AUDIO_DEVICE_OUT_SPEAKER
++        | AUDIO_DEVICE_OUT_WIRED_HEADPHONE,         "output-speaker+wired_headphone" },
++    { AUDIO_DEVICE_OUT_WIRED_HEADSET,               "output-wired_headset" },
++    { AUDIO_DEVICE_OUT_WIRED_HEADPHONE,             "output-wired_headphone" },
++    { AUDIO_DEVICE_OUT_BLUETOOTH_SCO,               "output-bluetooth_sco" },
++    { AUDIO_DEVICE_OUT_BLUETOOTH_SCO_HEADSET,       "output-sco_headset" },
++    { AUDIO_DEVICE_OUT_BLUETOOTH_SCO_CARKIT,        "output-sco_carkit" },
++    { AUDIO_DEVICE_OUT_BLUETOOTH_A2DP,              "output-a2dp" },
++    { AUDIO_DEVICE_OUT_BLUETOOTH_A2DP_HEADPHONES,   "output-a2dp_headphones" },
++    { AUDIO_DEVICE_OUT_BLUETOOTH_A2DP_SPEAKER,      "output-a2dp_speaker" },
++    { AUDIO_DEVICE_OUT_AUX_DIGITAL,                 "output-aux_digital" },
++    { AUDIO_DEVICE_OUT_ANLG_DOCK_HEADSET,           "output-analog_dock_headset" },
++    { AUDIO_DEVICE_OUT_DGTL_DOCK_HEADSET,           "output-digital_dock_headset" },
++    { AUDIO_DEVICE_OUT_USB_ACCESSORY,               "output-usb_accessory" },
++    { AUDIO_DEVICE_OUT_USB_DEVICE,                  "output-usb_device" },
++    { AUDIO_DEVICE_OUT_REMOTE_SUBMIX,               "output-remote_submix" },
++    { AUDIO_DEVICE_OUT_ANC_HEADSET,                 "output-anc_headset" },
++    { AUDIO_DEVICE_OUT_ANC_HEADPHONE,               "output-anc_headphone" },
++    { AUDIO_DEVICE_OUT_PROXY,                       "output-proxy" },
++    { AUDIO_DEVICE_OUT_FM,                          "output-fm" },
++    { AUDIO_DEVICE_OUT_FM_TX,                       "output-fm_tx" },
++    { AUDIO_DEVICE_OUT_SPDIF,                       "output-spdif" },
++    { 0, NULL }
++};
++
++/* Input devices */
++static struct string_conversion string_conversion_table_input_device[] = {
++    STRING_ENTRY(AUDIO_DEVICE_IN_COMMUNICATION),
++    STRING_ENTRY(AUDIO_DEVICE_IN_AMBIENT),
++    STRING_ENTRY(AUDIO_DEVICE_IN_BUILTIN_MIC),
++    STRING_ENTRY(AUDIO_DEVICE_IN_BLUETOOTH_SCO_HEADSET),
++    STRING_ENTRY(AUDIO_DEVICE_IN_WIRED_HEADSET),
++    STRING_ENTRY(AUDIO_DEVICE_IN_AUX_DIGITAL),
++    STRING_ENTRY(AUDIO_DEVICE_IN_VOICE_CALL),
++    STRING_ENTRY(AUDIO_DEVICE_IN_BACK_MIC),
++    STRING_ENTRY(AUDIO_DEVICE_IN_REMOTE_SUBMIX),
++    STRING_ENTRY(AUDIO_DEVICE_IN_ANLG_DOCK_HEADSET),
++    STRING_ENTRY(AUDIO_DEVICE_IN_DGTL_DOCK_HEADSET),
++    STRING_ENTRY(AUDIO_DEVICE_IN_USB_ACCESSORY),
++    STRING_ENTRY(AUDIO_DEVICE_IN_USB_DEVICE),
++    STRING_ENTRY(AUDIO_DEVICE_IN_ANC_HEADSET),
++    STRING_ENTRY(AUDIO_DEVICE_IN_PROXY),
++    STRING_ENTRY(AUDIO_DEVICE_IN_FM_RX),
++    STRING_ENTRY(AUDIO_DEVICE_IN_FM_RX_A2DP),
++    STRING_ENTRY(AUDIO_DEVICE_IN_FM),
++    STRING_ENTRY(AUDIO_DEVICE_IN_MATV),
++    STRING_ENTRY(AUDIO_DEVICE_IN_AUX_DIGITAL2),
++    STRING_ENTRY(AUDIO_DEVICE_IN_ALL_SCO),
++    STRING_ENTRY(AUDIO_DEVICE_IN_DEFAULT),
++    { 0, NULL }
++};
++
++static struct string_conversion string_conversion_table_input_device_fancy[] = {
++    { AUDIO_DEVICE_IN_COMMUNICATION,            "input-communication" },
++    { AUDIO_DEVICE_IN_AMBIENT,                  "input-ambient" },
++    { AUDIO_DEVICE_IN_BUILTIN_MIC,              "input-builtin_mic" },
++    { AUDIO_DEVICE_IN_BLUETOOTH_SCO_HEADSET,    "input-bluetooth_sco_headset" },
++    { AUDIO_DEVICE_IN_WIRED_HEADSET,            "input-wired_headset" },
++    { AUDIO_DEVICE_IN_AUX_DIGITAL,              "input-aux_digital" },
++    { AUDIO_DEVICE_IN_VOICE_CALL,               "input-voice_call" },
++    { AUDIO_DEVICE_IN_BACK_MIC,                 "input-back_mic" },
++    { AUDIO_DEVICE_IN_REMOTE_SUBMIX,            "input-remote_submix" },
++    { AUDIO_DEVICE_IN_ANC_HEADSET,              "input-anc_headset" },
++    { AUDIO_DEVICE_IN_PROXY,                    "input-proxy" },
++    { AUDIO_DEVICE_IN_FM_RX,                    "input-fm_rx" },
++    { AUDIO_DEVICE_IN_FM_RX_A2DP,               "input-fm_rx_a2dp" },
++    { AUDIO_DEVICE_IN_FM,                       "input-fm" },
++    { AUDIO_DEVICE_IN_MATV,                     "input-matv" },
++    { AUDIO_DEVICE_IN_AUX_DIGITAL2,             "input-aux_digital2" },
++    { 0, NULL }
++};
++
++/* Flags */
++static struct string_conversion string_conversion_table_flag[] = {
++    STRING_ENTRY(AUDIO_OUTPUT_FLAG_NONE),
++    STRING_ENTRY(AUDIO_OUTPUT_FLAG_DIRECT),
++    STRING_ENTRY(AUDIO_OUTPUT_FLAG_PRIMARY),
++    STRING_ENTRY(AUDIO_OUTPUT_FLAG_FAST),
++    STRING_ENTRY(AUDIO_OUTPUT_FLAG_DEEP_BUFFER),
++    STRING_ENTRY(AUDIO_OUTPUT_FLAG_COMPRESS_OFFLOAD),
++    STRING_ENTRY(AUDIO_OUTPUT_FLAG_NON_BLOCKING),
++    { 0, NULL }
++};
++
++/* Channels */
++static struct string_conversion string_conversion_table_output_channels[] = {
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_FRONT_LEFT),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_FRONT_RIGHT),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_FRONT_CENTER),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_LOW_FREQUENCY),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_BACK_LEFT),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_BACK_RIGHT),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_FRONT_LEFT_OF_CENTER),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_FRONT_RIGHT_OF_CENTER),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_BACK_CENTER),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_SIDE_LEFT),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_SIDE_RIGHT),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_TOP_CENTER),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_TOP_FRONT_LEFT),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_TOP_FRONT_CENTER),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_TOP_FRONT_RIGHT),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_TOP_BACK_LEFT),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_TOP_BACK_CENTER),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_TOP_BACK_RIGHT),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_MONO),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_STEREO),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_QUAD),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_SURROUND),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_5POINT1),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_7POINT1),
++    STRING_ENTRY(AUDIO_CHANNEL_OUT_ALL),
++    { 0, NULL }
++};
++static struct string_conversion string_conversion_table_input_channels[] = {
++    STRING_ENTRY(AUDIO_CHANNEL_IN_LEFT),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_RIGHT),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_FRONT),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_BACK),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_LEFT_PROCESSED),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_RIGHT_PROCESSED),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_FRONT_PROCESSED),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_BACK_PROCESSED),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_PRESSURE),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_X_AXIS),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_Y_AXIS),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_Z_AXIS),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_VOICE_UPLINK),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_VOICE_DNLINK),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_MONO),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_STEREO),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_FRONT_BACK),
++    STRING_ENTRY(AUDIO_CHANNEL_IN_ALL),
++    { 0, NULL }
++};
++
++/* Formats */
++static struct string_conversion string_conversion_table_format[] = {
++    STRING_ENTRY(AUDIO_FORMAT_DEFAULT),
++    STRING_ENTRY(AUDIO_FORMAT_PCM),
++    STRING_ENTRY(AUDIO_FORMAT_MP3),
++    STRING_ENTRY(AUDIO_FORMAT_AMR_NB),
++    STRING_ENTRY(AUDIO_FORMAT_AMR_WB),
++    STRING_ENTRY(AUDIO_FORMAT_AAC),
++    STRING_ENTRY(AUDIO_FORMAT_HE_AAC_V1),
++    STRING_ENTRY(AUDIO_FORMAT_HE_AAC_V2),
++    STRING_ENTRY(AUDIO_FORMAT_VORBIS),
++    STRING_ENTRY(AUDIO_FORMAT_MAIN_MASK),
++    STRING_ENTRY(AUDIO_FORMAT_SUB_MASK),
++    STRING_ENTRY(AUDIO_FORMAT_PCM_16_BIT),
++    STRING_ENTRY(AUDIO_FORMAT_PCM_8_BIT),
++    STRING_ENTRY(AUDIO_FORMAT_PCM_32_BIT),
++    STRING_ENTRY(AUDIO_FORMAT_PCM_8_24_BIT),
++    { 0, NULL }
++};
++#undef STRING_ENTRY
++
++/* Ports with availability option (for port/jack detection) */
++static const char* port_availability[] = {
++    "output-wired_headset",
++    "output-wired_headphone",
++    "input-wired_headset",
++    NULL
++};
++
++
++#endif
+Index: pulseaudio/src/modules/droid/droid-util.c
+===================================================================
+--- /dev/null
++++ pulseaudio/src/modules/droid/droid-util.c
+@@ -0,0 +1,1189 @@
++/*
++ * Copyright (C) 2013 Jolla Ltd.
++ *
++ * Contact: Juho Hämäläinen <juho.hamalainen@tieto.com>
++ *
++ * These PulseAudio Modules are free software; you can redistribute
++ * it and/or modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation
++ * version 2.1 of the License.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301
++ * USA.
++ */
++
++#ifdef HAVE_CONFIG_H
++#include <config.h>
++#endif
++
++#include <signal.h>
++#include <stdio.h>
++
++#ifdef HAVE_VALGRIND_MEMCHECK_H
++#include <valgrind/memcheck.h>
++#endif
++
++#include <pulse/rtclock.h>
++#include <pulse/timeval.h>
++#include <pulse/volume.h>
++#include <pulse/xmalloc.h>
++
++#include <pulsecore/core.h>
++#include <pulsecore/core-error.h>
++#include <pulsecore/i18n.h>
++#include <pulsecore/module.h>
++#include <pulsecore/memchunk.h>
++#include <pulsecore/sink.h>
++#include <pulsecore/modargs.h>
++#include <pulsecore/core-rtclock.h>
++#include <pulsecore/core-util.h>
++#include <pulsecore/sample-util.h>
++#include <pulsecore/log.h>
++#include <pulsecore/macro.h>
++#include <pulsecore/thread.h>
++#include <pulsecore/thread-mq.h>
++#include <pulsecore/rtpoll.h>
++#include <pulsecore/time-smoother.h>
++#include <pulsecore/refcnt.h>
++#include <pulsecore/shared.h>
++#include <pulsecore/mutex.h>
++
++#include <hardware/audio.h>
++#include <hardware_legacy/audio_policy_conf.h>
++
++#include "droid-util.h"
++
++#include <android-version.h>
++
++#ifndef ANDROID_VERSION_MAJOR
++#error "ANDROID_VERSION_* not defined."
++#endif
++
++#if ANDROID_VERSION_MAJOR == 4 && ANDROID_VERSION_MINOR == 1
++#include "droid-util-41qc.h"
++#elif ANDROID_VERSION_MAJOR == 4 && ANDROID_VERSION_MINOR >= 2
++#include "droid-util-42.h"
++#else
++#error "No valid ANDROID_VERSION found."
++#endif
++
++#define CONVERT_FUNC(TABL) \
++bool pa_convert_ ## TABL (uint32_t value, pa_conversion_field_t field, uint32_t *to_value) {                    \
++    for (unsigned int i = 0; i < sizeof( conversion_table_ ## TABL )/(sizeof(uint32_t)*2); i++) {               \
++        if ( conversion_table_ ## TABL [i][field] == value) {                                                   \
++            *to_value = conversion_table_ ## TABL [i][!field];                                                  \
++            return true;                                                                                        \
++        }                                                                                                       \
++    }                                                                                                           \
++    return false;                                                                                               \
++} struct __funny_extra_to_allow_semicolon
++
++/* Creates convert_format convert_channel etc.
++ * bool pa_convert_func(uint32_t value, pa_conversion_field_t field, uint32_t *to_value);
++ * return true if conversion succesful */
++CONVERT_FUNC(format);
++CONVERT_FUNC(output_channel);
++CONVERT_FUNC(input_channel);
++
++#define DEFAULT_PRIORITY (100)
++
++static bool string_convert_num_to_str(const struct string_conversion *list, const uint32_t value, const char **to_str) {
++    pa_assert(list);
++    pa_assert(to_str);
++
++    pa_log_debug("Trying to convert %x to string.", value);
++
++    for (unsigned int i = 0; list[i].str; i++) {
++        if (list[i].value == value) {
++            *to_str = list[i].str;
++            return true;
++        }
++    }
++    return false;
++}
++
++static bool string_convert_str_to_num(const struct string_conversion *list, const char *str, uint32_t *to_value) {
++    pa_assert(list);
++    pa_assert(str);
++    pa_assert(to_value);
++
++    pa_log_debug("Trying to convert %s to num.", str);
++
++    for (unsigned int i = 0; list[i].str; i++) {
++        if (pa_streq(list[i].str, str)) {
++            *to_value = list[i].value;
++            return true;
++        }
++    }
++    return false;
++}
++
++static bool check_port_availability(const char *port) {
++    pa_assert(port);
++
++    pa_log_debug("Checking availability for port '%s'", port);
++
++    for (unsigned int i = 0; port_availability[i]; i++) {
++        if (pa_streq(port_availability[i], port)) {
++            return true;
++        }
++    }
++
++    return false;
++}
++
++static char *list_string(struct string_conversion *list, uint32_t flags) {
++    char *str = NULL;
++    char *tmp;
++
++#ifdef HAL_V2
++    if (flags & AUDIO_DEVICE_BIT_IN)
++        flags &= ~AUDIO_DEVICE_BIT_IN;
++#endif
++
++    for (unsigned int i = 0; list[i].str; i++) {
++#ifdef HAL_V2
++        if (list[i].value & AUDIO_DEVICE_BIT_IN) {
++            if (popcount(list[i].value & ~AUDIO_DEVICE_BIT_IN) != 1)
++                continue;
++        } else
++#endif
++        if (popcount(list[i].value) != 1)
++            continue;
++
++        if (flags & list[i].value) {
++            if (str) {
++                tmp = pa_sprintf_malloc("%s|%s", str, list[i].str);
++                pa_xfree(str);
++                str = tmp;
++            } else {
++                str = pa_sprintf_malloc("%s", list[i].str);
++            }
++        }
++    }
++
++    return str;
++}
++
++static void droid_port_free(pa_droid_port *p) {
++    pa_assert(p);
++
++    pa_xfree(p->name);
++    pa_xfree(p->description);
++    pa_xfree(p);
++}
++
++/* Output device */
++bool pa_string_convert_output_device_num_to_str(audio_devices_t value, const char **to_str) {
++    return string_convert_num_to_str(string_conversion_table_output_device, (uint32_t) value, to_str);
++}
++
++bool pa_string_convert_output_device_str_to_num(const char *str, audio_devices_t *to_value) {
++    return string_convert_str_to_num(string_conversion_table_output_device, str, (uint32_t*) to_value);
++}
++
++char *pa_list_string_output_device(audio_devices_t devices) {
++    return list_string(string_conversion_table_output_device, devices);
++}
++
++/* Input device */
++bool pa_string_convert_input_device_num_to_str(audio_devices_t value, const char **to_str) {
++    return string_convert_num_to_str(string_conversion_table_input_device, (uint32_t) value, to_str);
++}
++
++bool pa_string_convert_input_device_str_to_num(const char *str, audio_devices_t *to_value) {
++    return string_convert_str_to_num(string_conversion_table_input_device, str, (uint32_t*) to_value);
++}
++
++char *pa_list_string_input_device(audio_devices_t devices) {
++    return list_string(string_conversion_table_input_device, devices);
++}
++
++/* Flags */
++bool pa_string_convert_flag_num_to_str(audio_output_flags_t value, const char **to_str) {
++    return string_convert_num_to_str(string_conversion_table_flag, (uint32_t) value, to_str);
++}
++
++bool pa_string_convert_flag_str_to_num(const char *str, audio_output_flags_t *to_value) {
++    return string_convert_str_to_num(string_conversion_table_flag, str, (uint32_t*) to_value);
++}
++
++char *pa_list_string_flags(audio_output_flags_t flags) {
++    return list_string(string_conversion_table_flag, flags);
++}
++
++/* Config parser */
++
++#define WHITESPACE "\n\r \t"
++
++static int parse_list(const struct string_conversion *table, const char *str, uint32_t *dst) {
++    int count = 0;
++    char *entry;
++    const char *state = NULL;
++
++    pa_assert(table);
++    pa_assert(str);
++    pa_assert(dst);
++
++    *dst = 0;
++
++    while ((entry = pa_split(str, "|", &state))) {
++        uint32_t d = 0;
++
++        if (!string_convert_str_to_num(table, entry, &d)) {
++            pa_log("Unknown entry %s", entry);
++            pa_xfree(entry);
++            return -1;
++        }
++
++        *dst |= d;
++        count++;
++
++        pa_xfree(entry);
++    }
++
++    return count;
++}
++
++static bool parse_sampling_rates(const char *str, uint32_t sampling_rates[32]) {
++    char *entry;
++    const char *state = NULL;
++
++    pa_assert(str);
++
++    uint32_t pos = 0;
++    while ((entry = pa_split(str, "|", &state))) {
++        int32_t val;
++
++        if (pos == AUDIO_MAX_SAMPLING_RATES) {
++            pa_log("Too many sample rate entries (> %d)", AUDIO_MAX_SAMPLING_RATES);
++            pa_xfree(entry);
++            return false;
++        }
++
++        if (pa_atoi(entry, &val) < 0) {
++            pa_log("Bad sample rate value %s", entry);
++            pa_xfree(entry);
++            return false;
++        }
++
++        sampling_rates[pos++] = val;
++
++        pa_xfree(entry);
++
++    }
++
++    sampling_rates[pos] = 0;
++
++    return true;
++}
++
++static bool parse_formats(const char *str, audio_format_t *formats) {
++    pa_assert(str);
++    pa_assert(formats);
++
++    return parse_list(string_conversion_table_format, str, formats) > 0;
++}
++
++static int parse_channels(const char *str, bool in_output, audio_channel_mask_t *channels) {
++    pa_assert(str);
++    pa_assert(channels);
++
++    /* Needs to be probed later */
++    if (pa_streq(str, "dynamic")) {
++        *channels = 0;
++        return true;
++    }
++
++    if (in_output)
++        return parse_list(string_conversion_table_output_channels, str, channels);
++    else
++        return parse_list(string_conversion_table_input_channels, str, channels);
++}
++
++static bool parse_devices(const char *str, bool in_output, audio_devices_t *devices) {
++    pa_assert(str);
++    pa_assert(devices);
++
++    if (in_output)
++        return parse_list(string_conversion_table_output_device, str, devices) > 0;
++    else
++        return parse_list(string_conversion_table_input_device, str, devices) > 0;
++}
++
++static bool parse_flags(const char *str, audio_output_flags_t *flags) {
++    pa_assert(str);
++    pa_assert(flags);
++
++    return parse_list(string_conversion_table_flag, str, flags) > 0;
++}
++
++bool pa_parse_droid_audio_config(const char *filename, pa_droid_config_audio *config) {
++    FILE *f;
++    int n = 0;
++    bool ret = true;
++
++    enum config_loc {
++        IN_ROOT = 0,
++        IN_GLOBAL = 1,
++        IN_HW_MODULES = 1,
++        IN_MODULE = 2,
++        IN_OUTPUT_INPUT = 3,
++        IN_CONFIG = 4
++    } loc = IN_ROOT;
++
++
++    bool in_global = false;
++    bool in_output = true;
++
++    pa_droid_config_hw_module *module = NULL;
++    pa_droid_config_output *output = NULL;
++    pa_droid_config_input *input = NULL;
++
++    pa_assert(filename);
++    pa_assert(config);
++
++    memset(config, 0, sizeof(pa_droid_config_audio));
++
++    f = fopen(filename, "r");
++
++    if (!f) {
++        pa_log_info("Failed to open config file (%s): %s", filename, pa_cstrerror(errno));
++        ret = false;
++        goto finish;
++    }
++
++    pa_lock_fd(fileno(f), 1);
++
++    while (!feof(f)) {
++        char ln[512];
++        char *d, *v, *val;
++
++        if (!fgets(ln, sizeof(ln), f))
++            break;
++
++        n++;
++
++        pa_strip_nl(ln);
++
++        if (ln[0] == '#' || !*ln )
++            continue;
++
++        /* Enter section */
++        if (ln[strlen(ln)-1] == '{') {
++            d = ln+strspn(ln, WHITESPACE);
++            v = d;
++            d = v+strcspn(v, WHITESPACE);
++            d[0] = '\0';
++
++            if (!*v) {
++                pa_log(__FILE__ ": [%s:%u] failed to parse line - too few words", filename, n);
++                goto finish;
++            }
++
++            switch (loc) {
++                case IN_ROOT:
++                    if (pa_streq(v, GLOBAL_CONFIG_TAG)) {
++                        in_global = true;
++                        loc = IN_GLOBAL;
++                    }
++                    else if (pa_streq(v, AUDIO_HW_MODULE_TAG))
++                        loc = IN_HW_MODULES;
++                    else {
++                        pa_log(__FILE__ ": [%s:%u] failed to parse line - unknown field (%s)", filename, n, v);
++                        ret = false;
++                        goto finish;
++                    }
++                    break;
++
++                case IN_HW_MODULES:
++                    module = &config->hw_modules[config->hw_modules_size];
++                    config->hw_modules_size++;
++                    strncpy(module->name, v, AUDIO_HARDWARE_MODULE_ID_MAX_LEN);
++                    module->config = config;
++                    loc = IN_MODULE;
++                    pa_log_debug("config: New module: %s", module->name);
++                    break;
++
++                case IN_MODULE:
++                    if (pa_streq(v, OUTPUTS_TAG)) {
++                        loc = IN_OUTPUT_INPUT;
++                        in_output = true;
++                    } else if (pa_streq(v, INPUTS_TAG)) {
++                        loc = IN_OUTPUT_INPUT;
++                        in_output = false;
++                    } else {
++                        pa_log(__FILE__ ": [%s:%u] failed to parse line - unknown field (%s)", filename, n, v);
++                        ret = false;
++                        goto finish;
++                    }
++                    break;
++
++                case IN_OUTPUT_INPUT:
++                    pa_assert(module);
++
++                    if (in_output) {
++                        output = &module->outputs[module->outputs_size];
++                        module->outputs_size++;
++                        strncpy(output->name, v, AUDIO_HARDWARE_MODULE_ID_MAX_LEN);
++                        output->module = module;
++                        loc = IN_CONFIG;
++                        pa_log_debug("config: %s: New output: %s", module->name, output->name);
++                    } else {
++                        input = &module->inputs[module->inputs_size];
++                        module->inputs_size++;
++                        strncpy(input->name, v, AUDIO_HARDWARE_MODULE_ID_MAX_LEN);
++                        input->module = module;
++                        loc = IN_CONFIG;
++                        pa_log_debug("config: %s: New input: %s", module->name, input->name);
++                    }
++                    break;
++
++                case IN_CONFIG:
++                    pa_log(__FILE__ ": [%s:%u] failed to parse line - unknown field in config (%s)", filename, n, v);
++                    ret = false;
++                    goto finish;
++            }
++
++            continue;
++        }
++
++        /* Exit section */
++        if (ln[strlen(ln)-1] == '}') {
++            if (loc == IN_ROOT) {
++                pa_log(__FILE__ ": [%s:%u] failed to parse line - extra closing bracket", filename, n);
++                ret = false;
++                goto finish;
++            }
++
++            loc--;
++            if (loc == IN_MODULE) {
++                if (in_output)
++                    output = NULL;
++                else
++                    input = NULL;
++            }
++            if (loc == IN_ROOT)
++                module = NULL;
++
++            in_global = false;
++
++            continue;
++        }
++
++        /* Parse global configuration */
++        if (in_global) {
++            bool success = false;
++
++            d = ln+strspn(ln, WHITESPACE);
++            v = d;
++            d = v+strcspn(v, WHITESPACE);
++
++            val = d+strspn(d, WHITESPACE);
++            d[0] = '\0';
++            d = val+strcspn(val, WHITESPACE);
++            d[0] = '\0';
++
++            if (pa_streq(v, ATTACHED_OUTPUT_DEVICES_TAG))
++                success = parse_devices(val, true, &config->global_config.attached_output_devices);
++            else if (pa_streq(v, DEFAULT_OUTPUT_DEVICE_TAG))
++                success = parse_devices(val, true, &config->global_config.default_output_device);
++            else if (pa_streq(v, ATTACHED_INPUT_DEVICES_TAG))
++                success = parse_devices(val, false, &config->global_config.attached_input_devices);
++            else if (pa_streq(v, SPEAKER_DRC_ENABLED_TAG)) {
++                pa_log(__FILE__ ": speaker drc is not yet supported, skipping", filename);
++                success = true;
++            } else {
++                pa_log(__FILE__ ": [%s:%u] failed to parse line - unknown config entry %s", filename, n, v);
++                success = false;
++            }
++
++            if (!success) {
++                ret = false;
++                goto finish;
++            }
++        }
++
++        /* Parse per-output or per-input configuration */
++        if (loc == IN_CONFIG) {
++            bool success = false;
++
++            pa_assert(module);
++
++            d = ln+strspn(ln, WHITESPACE);
++            v = d;
++            d = v+strcspn(v, WHITESPACE);
++
++            val = d+strspn(d, WHITESPACE);
++            d[0] = '\0';
++            d = val+strcspn(val, WHITESPACE);
++            d[0] = '\0';
++
++
++            if ((in_output && !output) || (!in_output && !input)) {
++                pa_log(__FILE__ ": [%s:%u] failed to parse line", filename, n);
++                ret = false;
++                goto finish;
++            }
++
++            if (pa_streq(v, SAMPLING_RATES_TAG))
++                success = parse_sampling_rates(val, in_output ? output->sampling_rates : input->sampling_rates);
++            else if (pa_streq(v, FORMATS_TAG))
++                success = parse_formats(val, in_output ? &output->formats : &input->formats);
++            else if (pa_streq(v, CHANNELS_TAG)) {
++                if (in_output)
++                    success = (parse_channels(val, true, &output->channel_masks) > 0);
++                else
++                    success = (parse_channels(val, false, &input->channel_masks) > 0);
++            } else if (pa_streq(v, DEVICES_TAG)) {
++                if (in_output)
++                    success = parse_devices(val, true, &output->devices);
++                else
++                    success = parse_devices(val, false, &input->devices);
++            } else if (pa_streq(v, FLAGS_TAG)) {
++                if (in_output)
++                    success = parse_flags(val, &output->flags);
++                else {
++                    pa_log(__FILE__ ": [%s:%u] failed to parse line - output flags inside input definition", filename, n);
++                    success = false;
++                }
++            } else {
++                pa_log(__FILE__ ": [%s:%u] failed to parse line - unknown config entry %s", filename, n, v);
++                success = false;
++            }
++
++            if (!success) {
++                ret = false;
++                goto finish;
++            }
++        }
++    }
++
++    pa_log_info("Parsed config file (%s): %u modules.", filename, config->hw_modules_size);
++
++finish:
++    if (f) {
++        pa_lock_fd(fileno(f), 0);
++        fclose(f);
++    }
++
++    return ret;
++}
++
++
++const pa_droid_config_output *pa_droid_config_find_output(const pa_droid_config_hw_module *module, const char *name) {
++    pa_assert(module);
++    pa_assert(name);
++
++    for (unsigned i = 0; i < module->outputs_size; i++) {
++        if (pa_streq(name, module->outputs[i].name))
++            return &module->outputs[i];
++    }
++
++    return NULL;
++}
++
++const pa_droid_config_input *pa_droid_config_find_input(const pa_droid_config_hw_module *module, const char *name) {
++    pa_assert(module);
++    pa_assert(name);
++
++    for (unsigned i = 0; i < module->inputs_size; i++) {
++        if (pa_streq(name, module->inputs[i].name))
++            return &module->inputs[i];
++    }
++
++    return NULL;
++}
++
++const pa_droid_config_hw_module *pa_droid_config_find_module(const pa_droid_config_audio *config, const char* module_id) {
++    pa_assert(config);
++    pa_assert(module_id);
++
++    for (unsigned i = 0; i < config->hw_modules_size; i++) {
++        if (pa_streq(module_id, config->hw_modules[i].name))
++            return &config->hw_modules[i];
++    }
++
++    return NULL;
++}
++
++pa_droid_profile *pa_droid_profile_new(pa_droid_profile_set *ps, const pa_droid_config_output *output, const pa_droid_config_input *input) {
++    pa_droid_profile *p;
++
++    pa_assert(ps);
++    pa_assert(output);
++
++    p = pa_xnew0(pa_droid_profile, 1);
++    p->profile_set = ps;
++    p->module = output->module;
++    p->name = pa_sprintf_malloc("%s%s%s", output->name, input ? "-" : "", input ? input->name : "");
++    p->description = pa_sprintf_malloc("%s output%s%s%s", output->name,
++                                                          input ? " and " : "",
++                                                          input ? input->name : "",
++                                                          input ? " input." : "");
++    p->priority = DEFAULT_PRIORITY;
++    if (pa_streq(output->name, "primary")) {
++        p->priority += DEFAULT_PRIORITY;
++
++        if (input && pa_streq(input->name, "primary"))
++            p->priority += DEFAULT_PRIORITY;
++    }
++
++    if (output)
++        p->output = pa_droid_mapping_get(ps, PA_DIRECTION_OUTPUT, output);
++    if (input)
++        p->input = pa_droid_mapping_get(ps, PA_DIRECTION_INPUT, input);
++
++    pa_hashmap_put(ps->profiles, p->name, p);
++
++    return p;
++}
++
++static void add_profile(pa_droid_profile_set *ps, const pa_droid_config_output *output, const pa_droid_config_input *input) {
++    pa_droid_profile *ap;
++
++    pa_log_debug("New profile: %s-%s", output->name, input ? input->name : "no input");
++
++    ap = pa_droid_profile_new(ps, output, input);
++
++    pa_hashmap_put(ps->profiles, ap->name, ap);
++}
++
++pa_droid_profile_set *pa_droid_profile_set_new(const pa_droid_config_hw_module *module) {
++    pa_droid_profile_set *ps;
++
++    pa_assert(module);
++
++    ps = pa_xnew0(pa_droid_profile_set, 1);
++    ps->config = module->config;
++    ps->profiles = pa_hashmap_new_full(pa_idxset_string_hash_func, pa_idxset_string_compare_func, NULL, (pa_free_cb_t) pa_droid_profile_free);
++    ps->output_mappings = pa_hashmap_new_full(pa_idxset_string_hash_func, pa_idxset_string_compare_func, NULL, (pa_free_cb_t) pa_droid_mapping_free);
++    ps->input_mappings = pa_hashmap_new_full(pa_idxset_string_hash_func, pa_idxset_string_compare_func, NULL, (pa_free_cb_t) pa_droid_mapping_free);
++    ps->all_ports = pa_hashmap_new_full(pa_idxset_string_hash_func, pa_idxset_string_compare_func, NULL, (pa_free_cb_t) droid_port_free);
++
++    /* Each distinct hw module output matches one profile. If there are multiple inputs
++     * combinations are made so that all possible outputs and inputs can be selected.
++     * So for outputs "primary" and "hdmi" and input "primary" profiles
++     * "primary-primary" and "hdmi-primary" are created. */
++
++    for (unsigned o = 0; o < module->outputs_size; o++) {
++
++        if (module->inputs_size > 0) {
++            for (unsigned i = 0; i < module->inputs_size; i++) {
++                add_profile(ps, &module->outputs[o], &module->inputs[i]);
++            }
++        } else
++            add_profile(ps, &module->outputs[o], NULL);
++    }
++
++    return ps;
++}
++
++void pa_droid_mapping_free(pa_droid_mapping *am) {
++    pa_assert(am);
++
++    pa_xfree(am->name);
++    pa_proplist_free(am->proplist);
++    pa_idxset_free(am->ports, NULL);
++    pa_xfree(am);
++}
++
++void pa_droid_profile_free(pa_droid_profile *ap) {
++    pa_assert(ap);
++
++    pa_xfree(ap->name);
++    pa_xfree(ap->description);
++    pa_xfree(ap);
++}
++
++void pa_droid_profile_set_free(pa_droid_profile_set *ps) {
++    pa_assert(ps);
++
++    if (ps->output_mappings)
++        pa_hashmap_free(ps->output_mappings);
++
++    if (ps->input_mappings)
++        pa_hashmap_free(ps->input_mappings);
++
++    if (ps->all_ports)
++        pa_hashmap_free(ps->all_ports);
++
++    if (ps->profiles)
++        pa_hashmap_free(ps->profiles);
++
++    pa_xfree(ps);
++}
++
++static pa_droid_port *create_o_port(pa_droid_mapping *am, uint32_t device, const char *name, const char *description) {
++    pa_droid_port *p;
++    char *desc;
++
++    pa_assert(am);
++    pa_assert(name);
++
++    pa_log_debug("  New output port %s", name);
++    p = pa_xnew0(pa_droid_port, 1);
++
++    p->mapping = am;
++    p->name = pa_xstrdup(name);
++    if (description) {
++        p->description = pa_xstrdup(description);
++    } else {
++        desc = pa_replace(name, "output-", "Output to ");
++        p->description = pa_replace(desc, "_", " ");
++        pa_xfree(desc);
++    }
++    p->priority = DEFAULT_PRIORITY;
++    p->device = device;
++
++    if (am->profile_set->config->global_config.attached_output_devices & device)
++        p->priority += DEFAULT_PRIORITY;
++
++    if (am->profile_set->config->global_config.default_output_device & device)
++        p->priority += DEFAULT_PRIORITY;
++
++    if (check_port_availability(p->name))
++        p->priority += (DEFAULT_PRIORITY * 3);
++
++    return p;
++}
++
++static void add_o_ports(pa_droid_mapping *am) {
++    pa_droid_port *p;
++    const char *name;
++    uint32_t devices;
++    uint32_t combo_devices;
++    uint32_t i = 0;
++
++    pa_assert(am);
++
++    devices = am->output->devices;
++
++    devices &= ~AUDIO_DEVICE_OUT_DEFAULT;
++
++    /* IHF combo devices, these devices are combined with IHF */
++    combo_devices = AUDIO_DEVICE_OUT_SPEAKER | AUDIO_DEVICE_OUT_WIRED_HEADPHONE;
++
++    while (devices) {
++        uint32_t cur_device = (1 << i++);
++
++        if (devices & cur_device) {
++
++            pa_assert_se(pa_droid_output_port_name(cur_device, &name));
++
++            if (!(p = pa_hashmap_get(am->profile_set->all_ports, name))) {
++
++                p = create_o_port(am, cur_device, name, NULL);
++                pa_hashmap_put(am->profile_set->all_ports, p->name, p);
++            } else
++                pa_log_debug("  Output port %s from cache", name);
++
++            pa_idxset_put(am->ports, p, NULL);
++
++            devices &= ~cur_device;
++        }
++    }
++
++    /* Combo devices, route to multiple routing targets simultaneously. */
++    if (am->output->devices & combo_devices) {
++        pa_assert_se(pa_droid_output_port_name(combo_devices, &name));
++        if (!(p = pa_hashmap_get(am->profile_set->all_ports, name))) {
++            p = create_o_port(am, combo_devices, name, NULL);
++            /* Reset priority to default. */
++            p->priority = DEFAULT_PRIORITY;
++
++            pa_hashmap_put(am->profile_set->all_ports, p->name, p);
++        } else
++            pa_log_debug("  Output port %s from cache", name);
++
++        pa_idxset_put(am->ports, p, NULL);
++    }
++
++    if (!(p = pa_hashmap_get(am->profile_set->all_ports, PA_DROID_OUTPUT_PARKING))) {
++        /* Create parking port for output mapping to be used when audio_mode_t changes. */
++        p = create_o_port(am, 0, PA_DROID_OUTPUT_PARKING, "Parking port");
++        /* Reset priority to half of default */
++        p->priority = DEFAULT_PRIORITY / 2;
++
++        pa_hashmap_put(am->profile_set->all_ports, p->name, p);
++    } else
++        pa_log_debug("  Output port %s from cache", PA_DROID_OUTPUT_PARKING);
++
++    pa_idxset_put(am->ports, p, NULL);
++}
++
++static void add_i_ports(pa_droid_mapping *am) {
++    pa_droid_port *p;
++    const char *name;
++    char *desc;
++    uint32_t devices;
++    uint32_t i = 0;
++
++    pa_assert(am);
++
++    devices = am->input->devices;
++#ifdef HAL_V2
++    devices &= ~AUDIO_DEVICE_IN_DEFAULT;
++#endif
++
++    while (devices) {
++        uint32_t cur_device = (1 << i++);
++
++        if (devices & cur_device) {
++
++#ifdef HAL_V2
++            cur_device |= AUDIO_DEVICE_BIT_IN;
++#endif
++
++            pa_assert_se(pa_droid_input_port_name(cur_device, &name));
++
++            if (!(p = pa_hashmap_get(am->profile_set->all_ports, name))) {
++                pa_log_debug("  New input port %s", name);
++                p = pa_xnew0(pa_droid_port, 1);
++
++                p->mapping = am;
++                p->name = pa_xstrdup(name);
++                desc = pa_replace(name, "input-", "Input from ");
++                p->description = pa_replace(desc, "_", " ");
++                pa_xfree(desc);
++                p->priority = DEFAULT_PRIORITY;
++                p->device = cur_device;
++
++                if (am->profile_set->config->global_config.attached_input_devices & cur_device & ~AUDIO_DEVICE_BIT_IN)
++                    p->priority += DEFAULT_PRIORITY;
++
++                /* Make builtin mic the default input device */
++                if (cur_device == AUDIO_DEVICE_IN_BUILTIN_MIC)
++                    p->priority += DEFAULT_PRIORITY;
++
++                if (check_port_availability(p->name))
++                    p->priority += (DEFAULT_PRIORITY * 3);
++
++                pa_hashmap_put(am->profile_set->all_ports, p->name, p);
++            } else
++                pa_log_debug("  Input port %s from cache", name);
++
++            pa_idxset_put(am->ports, p, NULL);
++
++            devices &= ~cur_device;
++        }
++    }
++
++    if (!(p = pa_hashmap_get(am->profile_set->all_ports, PA_DROID_INPUT_PARKING))) {
++        pa_log_debug("  New input port %s", PA_DROID_INPUT_PARKING);
++        /* Create parking port for input mapping to be used when audio_mode_t changes. */
++        p = pa_xnew0(pa_droid_port, 1);
++        p->mapping = am;
++        p->name = pa_sprintf_malloc(PA_DROID_INPUT_PARKING);
++        p->description = pa_sprintf_malloc("Parking port");
++        p->priority = 50;
++        p->device = 0; /* No routing */
++
++        pa_hashmap_put(am->profile_set->all_ports, p->name, p);
++    } else
++        pa_log_debug("  Input port %s from cache", PA_DROID_INPUT_PARKING);
++
++    pa_idxset_put(am->ports, p, NULL);
++}
++
++pa_droid_mapping *pa_droid_mapping_get(pa_droid_profile_set *ps, pa_direction_t direction, const void *data) {
++    pa_droid_mapping *am;
++    pa_hashmap *map;
++    const char *name;
++    const pa_droid_config_output *output = NULL;
++    const pa_droid_config_input *input = NULL;
++
++    if (direction == PA_DIRECTION_OUTPUT) {
++        output = (pa_droid_config_output *) data;
++        map = ps->output_mappings;
++        name = output->name;
++    } else {
++        input = (pa_droid_config_input *) data;
++        map = ps->input_mappings;
++        name = input->name;
++    }
++
++    if ((am = pa_hashmap_get(map, name))) {
++        pa_log_debug("  %s mapping %s from cache", input ? "Input" : "Output", name);
++        return am;
++    }
++    pa_log_debug("  New %s mapping %s", input ? "input" : "output", name);
++
++    am = pa_xnew0(pa_droid_mapping, 1);
++    am->profile_set = ps;
++    am->name = pa_xstrdup(name);
++    am->proplist = pa_proplist_new();
++    am->direction = direction;
++    am->output = output;
++    am->input = input;
++    am->ports = pa_idxset_new(pa_idxset_trivial_hash_func, pa_idxset_trivial_compare_func);;
++
++    if (am->direction == PA_DIRECTION_OUTPUT)
++        add_o_ports(am);
++    else
++        add_i_ports(am);
++
++    pa_hashmap_put(map, am->name, am);
++
++    return am;
++}
++
++bool pa_droid_output_port_name(audio_devices_t value, const char **to_str) {
++    return string_convert_num_to_str(string_conversion_table_output_device_fancy, (uint32_t) value, to_str);
++}
++
++bool pa_droid_input_port_name(audio_devices_t value, const char **to_str) {
++    return string_convert_num_to_str(string_conversion_table_input_device_fancy, (uint32_t) value, to_str);
++}
++
++static int add_ports(pa_core *core, pa_card_profile *cp, pa_hashmap *ports, pa_droid_mapping *am, pa_hashmap *extra) {
++    pa_droid_port *p;
++    pa_device_port *dp;
++    pa_droid_port_data *data;
++    uint32_t idx;
++    int count = 0;
++
++    pa_log_debug("Ports for %s%s: %s", cp ? "card " : "", am->direction == PA_DIRECTION_OUTPUT ? "output" : "input", am->name);
++
++    PA_IDXSET_FOREACH(p, am->ports, idx) {
++        if (!(dp = pa_hashmap_get(ports, p->name))) {
++            pa_log_debug("  New port %s", p->name);
++
++            pa_device_port_new_data port_data;
++            pa_device_port_new_data_init(&port_data);
++            pa_device_port_new_data_set_name(&port_data, p->name);
++            pa_device_port_new_data_set_description(&port_data, p->description);
++            pa_device_port_new_data_set_direction(&port_data, p->mapping->direction);
++            dp = pa_device_port_new(core, &port_data, sizeof(pa_droid_port_data));
++            pa_device_port_new_data_done(&port_data);
++            dp->priority = p->priority;
++
++            pa_hashmap_put(ports, dp->name, dp);
++            dp->profiles = pa_hashmap_new_full(pa_idxset_string_hash_func, pa_idxset_string_compare_func, NULL, (pa_free_cb_t) pa_droid_profile_free);
++
++            data = PA_DEVICE_PORT_DATA(dp);
++            data->device = p->device;
++        } else
++            pa_log_debug("  Port %s from cache", p->name);
++
++        /* If port/jack detection is available, start as not available by default */
++        dp->available = check_port_availability(p->name) ? PA_AVAILABLE_NO : PA_AVAILABLE_UNKNOWN;
++
++        if (cp)
++            pa_hashmap_put(dp->profiles, cp->name, cp);
++
++        count++;
++
++        if (extra) {
++            pa_hashmap_put(extra, dp->name, dp);
++            pa_device_port_ref(dp);
++        }
++    }
++
++    return count;
++}
++
++
++void pa_droid_add_ports(pa_hashmap *p, pa_droid_mapping *am, pa_card *card) {
++    pa_assert(p);
++
++    add_ports(card->core, NULL, card->ports, am, p);
++}
++
++void pa_droid_add_card_ports(pa_card_profile *cp, pa_hashmap *ports, pa_droid_mapping *am, pa_core *core) {
++    pa_assert(cp);
++    pa_assert(am);
++    pa_assert(core);
++
++    add_ports(core, cp, ports, am, NULL);
++}
++
++static char *shared_name_get(const char *module_id) {
++    pa_assert(module_id);
++    return pa_sprintf_malloc("droid-hardware-module-%s", module_id);
++}
++
++static pa_droid_hw_module *droid_hw_module_open(pa_core *core, pa_droid_config_audio *config, const char *module_id) {
++    const pa_droid_config_hw_module *module;
++    pa_droid_hw_module *hw = NULL;
++    struct hw_module_t *hwmod = NULL;
++    audio_hw_device_t *device = NULL;
++    int ret;
++
++    pa_assert(core);
++    pa_assert(module_id);
++
++    if (!config) {
++        pa_log("No configuration provided for opening module with id %s", module_id);
++        goto fail;
++    }
++
++    if (!(module = pa_droid_config_find_module(config, module_id))) {
++        pa_log("Couldn't find module with id %s", module_id);
++        goto fail;
++    }
++
++    hw_get_module_by_class(AUDIO_HARDWARE_MODULE_ID, module->name, (const hw_module_t**) &hwmod);
++    if (!hwmod) {
++        pa_log("Failed to get hw module id: %s name: %s, trying alternative.", AUDIO_HARDWARE_MODULE_ID, module->name);
++        hw_get_module_by_class(AUDIO_HARDWARE_MODULE_ID2, module->name, (const hw_module_t**) &hwmod);
++        if (!hwmod) {
++            pa_log("Failed to get hw module id: %s name: %s.", AUDIO_HARDWARE_MODULE_ID2, module->name);
++            goto fail;
++        }
++    }
++
++    pa_log_info("Loaded hw module %s", module->name);
++
++    ret = audio_hw_device_open(hwmod, &device);
++    if (!device) {
++        pa_log("Failed to open device (errno %d).", ret);
++        goto fail;
++    }
++
++    if ((ret = device->init_check(device)) != 0) {
++        pa_log("Failed init_check() (errno %d)", ret);
++        goto fail;
++    }
++
++    hw = pa_xnew0(pa_droid_hw_module, 1);
++    PA_REFCNT_INIT(hw);
++    hw->core = core;
++    hw->hwmod = hwmod;
++    hw->hw_mutex = pa_mutex_new(true, false);
++    hw->device = device;
++    hw->config = config; /* We take ownership of config struct. */
++    hw->enabled_module = pa_droid_config_find_module(hw->config, module_id);
++    hw->module_id = hw->enabled_module->name;
++    hw->shared_name = shared_name_get(hw->module_id);
++
++    pa_assert_se(pa_shared_set(core, hw->shared_name, hw) >= 0);
++
++    return hw;
++
++fail:
++    if (device)
++        audio_hw_device_close(device);
++
++    if (hw)
++        pa_xfree(hw);
++
++    return NULL;
++}
++
++pa_droid_hw_module *pa_droid_hw_module_get(pa_core *core, pa_droid_config_audio *config, const char *module_id) {
++    pa_droid_hw_module *hw;
++    char *shared_name;
++
++    pa_assert(core);
++    pa_assert(module_id);
++
++    shared_name = shared_name_get(module_id);
++    if ((hw = pa_shared_get(core, shared_name)))
++        hw = pa_droid_hw_module_ref(hw);
++    else
++        hw = droid_hw_module_open(core, config, module_id);
++
++    pa_xfree(shared_name);
++    return hw;
++}
++
++pa_droid_hw_module *pa_droid_hw_module_ref(pa_droid_hw_module *hw) {
++    pa_assert(hw);
++    pa_assert(PA_REFCNT_VALUE(hw) >= 1);
++
++    PA_REFCNT_INC(hw);
++    return hw;
++}
++
++static void droid_hw_module_close(pa_droid_hw_module *hw) {
++    pa_assert(hw);
++
++    pa_log_info("Closing hw module %s", hw->enabled_module->name);
++
++    if (hw->config)
++        pa_xfree(hw->config);
++
++    if (hw->device)
++        audio_hw_device_close(hw->device);
++
++    if (hw->hw_mutex)
++        pa_mutex_free(hw->hw_mutex);
++
++    if (hw->shared_name)
++        pa_xfree(hw->shared_name);
++
++    pa_xfree(hw);
++}
++
++void pa_droid_hw_module_unref(pa_droid_hw_module *hw) {
++
++    pa_assert(hw);
++    pa_assert(PA_REFCNT_VALUE(hw) >= 1);
++
++    if (PA_REFCNT_DEC(hw) > 0)
++        return;
++
++    pa_assert_se(pa_shared_remove(hw->core, hw->shared_name) >= 0);
++    droid_hw_module_close(hw);
++}
++
++pa_droid_config_audio *pa_droid_config_load(pa_modargs *ma) {
++    pa_droid_config_audio *config;
++    const char *config_location;
++
++    pa_assert(ma);
++
++    config = pa_xnew0(pa_droid_config_audio, 1);
++
++    if ((config_location = pa_modargs_get_value(ma, "config", NULL))) {
++        if (!pa_parse_droid_audio_config(config_location, config)) {
++            pa_log("Failed to parse configuration from %s", config_location);
++            goto fail;
++        }
++    } else {
++        config_location = AUDIO_POLICY_VENDOR_CONFIG_FILE;
++
++        if (!pa_parse_droid_audio_config(config_location, config)) {
++            pa_log_debug("Failed to parse configuration from vendor %s", config_location);
++
++            config_location = AUDIO_POLICY_CONFIG_FILE;
++
++            if (!pa_parse_droid_audio_config(config_location, config)) {
++                pa_log("Failed to parse configuration from %s", config_location);
++                goto fail;
++            }
++        }
++    }
++
++    return config;
++
++fail:
++    pa_xfree(config);
++    return NULL;
++}
++
++void pa_droid_hw_module_lock(pa_droid_hw_module *hw) {
++    pa_assert(hw);
++
++    pa_mutex_lock(hw->hw_mutex);
++}
++
++bool pa_droid_hw_module_try_lock(pa_droid_hw_module *hw) {
++    pa_assert(hw);
++
++    return pa_mutex_try_lock(hw->hw_mutex);
++}
++
++void pa_droid_hw_module_unlock(pa_droid_hw_module *hw) {
++    pa_assert(hw);
++
++    pa_mutex_unlock(hw->hw_mutex);
++}
+Index: pulseaudio/src/modules/droid/droid-util.h
+===================================================================
+--- /dev/null
++++ pulseaudio/src/modules/droid/droid-util.h
+@@ -0,0 +1,256 @@
++#ifndef foodroidutilfoo
++#define foodroidutilfoo
++
++/*
++ * Copyright (C) 2013 Jolla Ltd.
++ *
++ * Contact: Juho Hämäläinen <juho.hamalainen@tieto.com>
++ *
++ * These PulseAudio Modules are free software; you can redistribute
++ * it and/or modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation
++ * version 2.1 of the License.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301
++ * USA.
++ */
++
++#ifdef HAVE_CONFIG_H
++#include <config.h>
++#endif
++#include <pulsecore/core-util.h>
++#include <pulsecore/macro.h>
++#include <pulsecore/mutex.h>
++#include <pulsecore/modargs.h>
++
++#include <hardware/audio.h>
++#include <hardware_legacy/audio_policy_conf.h>
++
++#define PROP_DROID_DEVICES    "droid.devices"
++#define PROP_DROID_FLAGS      "droid.flags"
++#define PROP_DROID_HW_MODULE  "droid.hw_module"
++
++/* Alternative module ID */
++#define AUDIO_HARDWARE_MODULE_ID2 "libaudio"
++
++/* From module-device-restore */
++#define MODULE_DEVICE_RESTORE_SKIP_PROPERTY "module-device-restore.skip"
++
++typedef struct pa_droid_hw_module pa_droid_hw_module;
++typedef struct pa_droid_card_data pa_droid_card_data;
++typedef void (*common_set_parameters_cb_t)(pa_droid_card_data *card_data, const char *str);
++
++typedef struct pa_droid_config_audio pa_droid_config_audio;
++typedef struct pa_droid_config_hw_module pa_droid_config_hw_module;
++
++struct pa_droid_hw_module {
++    PA_REFCNT_DECLARE;
++
++    pa_core *core;
++    char *shared_name;
++
++    pa_droid_config_audio *config;
++    const pa_droid_config_hw_module *enabled_module;
++    pa_mutex *hw_mutex;
++
++    struct hw_module_t *hwmod;
++    audio_hw_device_t *device;
++
++    const char *module_id;
++
++    uint32_t stream_out_id;
++    uint32_t stream_in_id;
++
++};
++
++struct pa_droid_card_data {
++    void *userdata;
++    /* General functions */
++    char *module_id;
++    common_set_parameters_cb_t set_parameters;
++};
++
++#define AUDIO_MAX_SAMPLING_RATES (32)
++#define AUDIO_MAX_HW_MODULES (8)
++#define AUDIO_MAX_INPUTS (8)
++#define AUDIO_MAX_OUTPUTS (8)
++
++typedef struct pa_droid_config_global {
++    audio_devices_t attached_output_devices;
++    audio_devices_t default_output_device;
++    audio_devices_t attached_input_devices;
++} pa_droid_config_global;
++
++typedef struct pa_droid_config_output {
++    const pa_droid_config_hw_module *module;
++
++    char name[AUDIO_HARDWARE_MODULE_ID_MAX_LEN];
++    uint32_t sampling_rates[AUDIO_MAX_SAMPLING_RATES];
++    audio_channel_mask_t channel_masks; /* 0 -> dynamic */
++    audio_format_t formats;
++    audio_devices_t devices;
++    audio_output_flags_t flags;
++} pa_droid_config_output;
++
++typedef struct pa_droid_config_input {
++    const pa_droid_config_hw_module *module;
++
++    char name[AUDIO_HARDWARE_MODULE_ID_MAX_LEN];
++    uint32_t sampling_rates[AUDIO_MAX_SAMPLING_RATES];
++    audio_channel_mask_t channel_masks; /* 0 -> dynamic */
++    audio_format_t formats;
++    audio_devices_t devices;
++} pa_droid_config_input;
++
++struct pa_droid_config_hw_module {
++    const pa_droid_config_audio *config;
++
++    char name[AUDIO_HARDWARE_MODULE_ID_MAX_LEN];
++    pa_droid_config_output outputs[AUDIO_MAX_OUTPUTS];
++    uint32_t outputs_size;
++    pa_droid_config_input inputs[AUDIO_MAX_INPUTS];
++    uint32_t inputs_size;
++};
++
++struct pa_droid_config_audio {
++    pa_droid_config_global global_config;
++    pa_droid_config_hw_module hw_modules[AUDIO_MAX_HW_MODULES];
++    uint32_t hw_modules_size;
++};
++
++
++/* Profiles */
++
++typedef struct pa_droid_profile_set pa_droid_profile_set;
++typedef struct pa_droid_mapping pa_droid_mapping;
++
++typedef struct pa_droid_port_data {
++    audio_devices_t device;
++} pa_droid_port_data;
++
++typedef struct pa_droid_port {
++    pa_droid_mapping *mapping;
++
++    audio_devices_t device;
++    char *name;
++    char *description;
++    unsigned priority;
++} pa_droid_port;
++
++struct pa_droid_mapping {
++    pa_droid_profile_set *profile_set;
++
++    const pa_droid_config_output *output;
++    const pa_droid_config_input *input;
++
++    char *name;
++    char *description;
++    unsigned priority;
++    pa_proplist *proplist;
++
++    /* Mapping doesn't own the ports */
++    pa_idxset *ports;
++
++    pa_direction_t direction;
++
++    pa_sink *sink;
++    pa_source *source;
++};
++
++typedef struct pa_droid_profile {
++    pa_droid_profile_set *profile_set;
++
++    const pa_droid_config_hw_module *module;
++
++    char *name;
++    char *description;
++    unsigned priority;
++
++    /* Profile doesn't own the mappings */
++    pa_droid_mapping *output;
++    pa_droid_mapping *input;
++
++} pa_droid_profile;
++
++struct pa_droid_profile_set {
++    const pa_droid_config_audio *config;
++
++    pa_hashmap *all_ports;
++    pa_hashmap *output_mappings;
++    pa_hashmap *input_mappings;
++    pa_hashmap *profiles;
++};
++
++#define PA_DROID_OUTPUT_PARKING "output-parking"
++#define PA_DROID_INPUT_PARKING "input-parking"
++
++/* Open hardware module */
++/* 'config' can be NULL if it is assumed that hw module with module_id already is open. */
++/* if opening of hw_module succeeds, config ownership is transferred to hw_module and config
++ * shouldn't be freed. */
++pa_droid_hw_module *pa_droid_hw_module_get(pa_core *core, pa_droid_config_audio *config, const char *module_id);
++pa_droid_hw_module *pa_droid_hw_module_ref(pa_droid_hw_module *hw);
++void pa_droid_hw_module_unref(pa_droid_hw_module *hw);
++
++void pa_droid_hw_module_lock(pa_droid_hw_module *hw);
++bool pa_droid_hw_module_try_lock(pa_droid_hw_module *hw);
++void pa_droid_hw_module_unlock(pa_droid_hw_module *hw);
++
++/* Conversion helpers */
++typedef enum {
++    CONV_FROM_PA,
++    CONV_FROM_HAL
++} pa_conversion_field_t;
++
++bool pa_convert_output_channel(uint32_t value, pa_conversion_field_t from, uint32_t *to_value);
++bool pa_convert_input_channel(uint32_t value, pa_conversion_field_t from, uint32_t *to_value);
++bool pa_convert_format(uint32_t value, pa_conversion_field_t from, uint32_t *to_value);
++
++bool pa_string_convert_output_device_num_to_str(audio_devices_t value, const char **to_str);
++bool pa_string_convert_output_device_str_to_num(const char *str, audio_devices_t *to_value);
++bool pa_string_convert_input_device_num_to_str(audio_devices_t value, const char **to_str);
++bool pa_string_convert_input_device_str_to_num(const char *str, audio_devices_t *to_value);
++
++bool pa_string_convert_flag_num_to_str(audio_output_flags_t value, const char **to_str);
++bool pa_string_convert_flag_str_to_num(const char *str, audio_output_flags_t *to_value);
++
++char *pa_list_string_output_device(audio_devices_t devices);
++char *pa_list_string_input_device(audio_devices_t devices);
++char *pa_list_string_flags(audio_output_flags_t flags);
++
++/* Config parser */
++bool pa_parse_droid_audio_config(const char *filename, pa_droid_config_audio *config);
++pa_droid_config_audio *pa_droid_config_load(pa_modargs *ma);
++
++const pa_droid_config_output *pa_droid_config_find_output(const pa_droid_config_hw_module *module, const char *name);
++const pa_droid_config_input *pa_droid_config_find_input(const pa_droid_config_hw_module *module, const char *name);
++const pa_droid_config_hw_module *pa_droid_config_find_module(const pa_droid_config_audio *config, const char* module_id);
++
++
++/* Profiles */
++pa_droid_profile_set *pa_droid_profile_set_new(const pa_droid_config_hw_module *module);
++void pa_droid_profile_set_free(pa_droid_profile_set *ps);
++
++pa_droid_profile *pa_droid_profile_new(pa_droid_profile_set *ps, const pa_droid_config_output *output, const pa_droid_config_input *input);
++void pa_droid_profile_free(pa_droid_profile *p);
++
++pa_droid_mapping *pa_droid_mapping_get(pa_droid_profile_set *ps, pa_direction_t direction, const void *data);
++void pa_droid_mapping_free(pa_droid_mapping *am);
++
++/* Add ports from sinks/sources */
++void pa_droid_add_ports(pa_hashmap *ports, pa_droid_mapping *am, pa_card *card);
++/* Add ports from card */
++void pa_droid_add_card_ports(pa_card_profile *cp, pa_hashmap *ports, pa_droid_mapping *am, pa_core *core);
++
++/* Pretty port names */
++bool pa_droid_output_port_name(audio_devices_t value, const char **to_str);
++bool pa_droid_input_port_name(audio_devices_t value, const char **to_str);
++
++#endif
+Index: pulseaudio/src/modules/droid/module-droid-card.c
+===================================================================
+--- /dev/null
++++ pulseaudio/src/modules/droid/module-droid-card.c
+@@ -0,0 +1,636 @@
++/*
++ * Copyright (C) 2013 Jolla Ltd.
++ *
++ * Contact: Juho Hämäläinen <juho.hamalainen@tieto.com>
++ *
++ * These PulseAudio Modules are free software; you can redistribute
++ * it and/or modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation
++ * version 2.1 of the License.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301
++ * USA.
++ */
++
++#ifdef HAVE_CONFIG_H
++#include <config.h>
++#endif
++
++#include <signal.h>
++#include <stdio.h>
++
++#ifdef HAVE_VALGRIND_MEMCHECK_H
++#include <valgrind/memcheck.h>
++#endif
++
++#include <pulse/rtclock.h>
++#include <pulse/timeval.h>
++#include <pulse/volume.h>
++#include <pulse/xmalloc.h>
++
++#include <pulsecore/core.h>
++#include <pulsecore/i18n.h>
++#include <pulsecore/module.h>
++#include <pulsecore/memchunk.h>
++#include <pulsecore/sink.h>
++#include <pulsecore/source.h>
++#include <pulsecore/modargs.h>
++#include <pulsecore/core-rtclock.h>
++#include <pulsecore/core-util.h>
++#include <pulsecore/sample-util.h>
++#include <pulsecore/log.h>
++#include <pulsecore/macro.h>
++#include <pulsecore/thread.h>
++#include <pulsecore/thread-mq.h>
++#include <pulsecore/rtpoll.h>
++#include <pulsecore/time-smoother.h>
++#include <pulsecore/card.h>
++#include <pulsecore/device-port.h>
++#include <pulsecore/idxset.h>
++
++#include <hardware/audio.h>
++#include <system/audio.h>
++
++//#include <droid/hardware/audio_policy.h>
++//#include <droid/system/audio_policy.h>
++
++#include "droid-util.h"
++#include "droid-sink.h"
++#include "droid-source.h"
++#ifdef HAVE_UDEV
++#include "droid-extcon.h"
++#endif
++
++#include "module-droid-card-symdef.h"
++
++PA_MODULE_AUTHOR("Juho Hämäläinen");
++PA_MODULE_DESCRIPTION("Droid card");
++PA_MODULE_VERSION(PACKAGE_VERSION);
++PA_MODULE_USAGE(
++        "card_name=<name for the card> "
++        "sink_name=<name for the sink> "
++        "source_name=<name for the source> "
++        "namereg_fail=<when false attempt to synthesise new names if they are already taken> "
++        "rate=<sample rate> "
++        "output_flags=<flags for sink> "
++        "module_id=<which droid hw module to load, default primary> "
++        "voice_source_routing=<route source ports during voice call, default false> "
++        "deferred_volume=<synchronize software and hardware volume changes to avoid momentary jumps?> "
++        "config=<location for droid audio configuration> "
++        "voice_volume_call_mode=<sink volume controls voice volume during call mode, default false> "
++        "voice_property_key=<proplist key searched for sink-input that should control voice call volume> "
++        "voice_property_value=<proplist value for the key for voice control sink-input> "
++        "voice_virtual_stream=<true/false> create virtual stream for voice call volume control (default false)"
++);
++
++static const char* const valid_modargs[] = {
++    "card_name",
++    "sink_name",
++    "source_name",
++    "namereg_fail",
++    "format",
++    "rate",
++    "output_flags",
++    "module_id",
++    "voice_source_routing",
++    "sink_buffer",
++    "source_buffer",
++    "deferred_volume",
++    "mute_routing_before",
++    "mute_routing_after",
++    "config",
++    "voice_volume_call_mode",
++    "voice_property_key",
++    "voice_property_value",
++    "voice_virtual_stream",
++    NULL,
++};
++
++#define DEFAULT_MODULE_ID "primary"
++#define DEFAULT_AUDIO_POLICY_CONF "/system/etc/audio_policy.conf"
++#define VOICE_CALL_PROFILE_NAME     "voicecall"
++#define VOICE_CALL_PROFILE_DESC     "Call mode"
++#define RINGTONE_PROFILE_NAME       "ringtone"
++#define RINGTONE_PROFILE_DESC       "Ringtone mode"
++#define COMMUNICATION_PROFILE_NAME  "communication"
++#define COMMUNICATION_PROFILE_DESC  "Communication mode"
++
++struct virtual_profile {
++    pa_droid_profile *profile;
++    audio_mode_t mode;
++};
++
++struct userdata {
++    pa_core *core;
++    pa_module *module;
++
++    pa_thread *thread;
++    pa_thread_mq thread_mq;
++    pa_rtpoll *rtpoll;
++
++    pa_droid_profile_set *profile_set;
++
++    pa_droid_hw_module *hw_module;
++    pa_droid_card_data card_data;
++
++    struct virtual_profile call_profile;
++    struct virtual_profile comm_profile;
++    struct virtual_profile ring_profile;
++    pa_droid_profile *old_profile;
++
++#ifdef HAVE_UDEV
++    pa_droid_extcon *extcon;
++#endif
++
++    bool voice_source_routing;
++
++    pa_modargs *modargs;
++    pa_card *card;
++};
++
++struct profile_data {
++    pa_droid_profile *profile;
++};
++
++static void add_disabled_profile(pa_hashmap *profiles) {
++    pa_card_profile *cp;
++    struct profile_data *d;
++
++    cp = pa_card_profile_new("off", _("Off"), sizeof(struct profile_data));
++
++    d = PA_CARD_PROFILE_DATA(cp);
++    d->profile = NULL;
++
++    pa_hashmap_put(profiles, cp->name, cp);
++}
++
++/* Special profile for calls */
++static pa_droid_profile* add_virtual_profile(struct userdata *u, const char *name, const char *description, pa_hashmap *profiles) {
++    pa_droid_profile *ap;
++    pa_card_profile *cp;
++    struct profile_data *d;
++
++    pa_assert(u);
++    pa_assert(u->profile_set);
++
++    pa_log_debug("New virtual profile: %s", name);
++
++    ap = pa_xnew0(pa_droid_profile, 1);
++    ap->profile_set = u->profile_set;
++    ap->name = pa_xstrdup(name);
++    ap->description = pa_xstrdup(description);
++    ap->priority = 50;
++
++    pa_hashmap_put(u->profile_set->profiles, ap->name, ap);
++
++    cp = pa_card_profile_new(ap->name, ap->description, sizeof(struct profile_data));
++    d = PA_CARD_PROFILE_DATA(cp);
++    d->profile = ap;
++
++    pa_hashmap_put(profiles, cp->name, cp);
++
++    return ap;
++}
++
++static void set_parameters_cb(pa_droid_card_data *card_data, const char *str) {
++    struct userdata *u;
++
++    pa_assert(card_data);
++    pa_assert(str);
++
++    u = card_data->userdata;
++
++    if (u) {
++        pa_log_debug("Setting parameters: %s", str);
++        pa_droid_hw_module_lock(u->hw_module);
++        u->hw_module->device->set_parameters(u->hw_module->device, str);
++        pa_droid_hw_module_unlock(u->hw_module);
++    }
++}
++
++static void set_card_name(pa_modargs *ma, pa_card_new_data *data, const char *module_id) {
++    const char *tmp;
++    char *name;
++
++    pa_assert(ma);
++    pa_assert(data);
++    pa_assert(module_id);
++
++    if ((tmp = pa_modargs_get_value(ma, "card_name", NULL))) {
++        pa_card_new_data_set_name(data, tmp);
++        data->namereg_fail = true;
++        return;
++    }
++
++    name = pa_sprintf_malloc("droid_card.%s", module_id);
++    pa_card_new_data_set_name(data, name);
++    pa_xfree(name);
++    data->namereg_fail = false;
++}
++
++static void add_profile(struct userdata *u, pa_hashmap *h, pa_hashmap *ports, pa_droid_profile *ap) {
++    pa_card_profile *cp;
++    struct profile_data *d;
++
++    pa_assert(u);
++    pa_assert(h);
++    pa_assert(ports);
++    pa_assert(ap);
++
++    pa_log_debug("Card profile %s", ap->name);
++
++    cp = pa_card_profile_new(ap->name, ap->description, sizeof(struct profile_data));
++    cp->priority = ap->priority;
++
++    cp->n_sinks = 1;
++    pa_droid_add_card_ports(cp, ports, ap->output, u->core);
++    cp->max_sink_channels = popcount(ap->output->output->channel_masks);
++    if (ap->input) {
++        pa_droid_add_card_ports(cp, ports, ap->input, u->core);
++        cp->n_sources = 1;
++        cp->max_source_channels = popcount(ap->input->input->channel_masks);
++    }
++
++    d = PA_CARD_PROFILE_DATA(cp);
++    d->profile = ap;
++
++    pa_hashmap_put(h, cp->name, cp);
++}
++
++static void add_profiles(struct userdata *u, pa_hashmap *h, pa_hashmap *ports) {
++    void *state;
++    pa_droid_profile *ap;
++
++    pa_assert(u);
++    pa_assert(h);
++    pa_assert(ports);
++
++    PA_HASHMAP_FOREACH(ap, u->profile_set->profiles, state) {
++        add_profile(u, h, ports, ap);
++    }
++}
++
++static void init_profile(struct userdata *u) {
++    pa_droid_mapping *am;
++    struct profile_data *d;
++
++    pa_assert(u);
++
++    pa_log_debug("Init profile.");
++
++    d = PA_CARD_PROFILE_DATA(u->card->active_profile);
++
++    if (d->profile && d->profile->output) {
++        am = d->profile->output;
++        am->sink = pa_droid_sink_new(u->module, u->modargs, __FILE__, &u->card_data, 0, am, u->card);
++    }
++
++    if (d->profile && d->profile->input) {
++        am = d->profile->input;
++        am->source = pa_droid_source_new(u->module, u->modargs, __FILE__, &u->card_data, am, u->card);
++    }
++}
++
++static int set_mode(struct userdata *u, audio_mode_t mode) {
++    int ret;
++    const char *mode_str;
++
++    pa_assert(u);
++    pa_assert(u->hw_module);
++    pa_assert(u->hw_module->device);
++
++    switch (mode) {
++        case AUDIO_MODE_RINGTONE:
++            mode_str = "AUDIO_MODE_RINGTONE";
++            break;
++        case AUDIO_MODE_IN_CALL:
++            mode_str = "AUDIO_MODE_IN_CALL";
++            break;
++        case AUDIO_MODE_IN_COMMUNICATION:
++            mode_str = "AUDIO_MODE_IN_COMMUNICATION";
++            break;
++        default:
++            mode_str = "AUDIO_MODE_NORMAL";
++            break;
++    }
++
++    pa_log_debug("Set mode to %s.", mode_str);
++
++    pa_droid_hw_module_lock(u->hw_module);
++    if ((ret = u->hw_module->device->set_mode(u->hw_module->device, mode)) < 0)
++        pa_log("Failed to set mode.");
++    pa_droid_hw_module_unlock(u->hw_module);
++
++    return ret;
++}
++
++static void park_profile(pa_droid_profile *dp) {
++    pa_assert(dp);
++
++    if (dp->output && dp->output->sink)
++        pa_sink_set_port(dp->output->sink, PA_DROID_OUTPUT_PARKING, false);
++    if (dp->input && dp->input->source)
++        pa_source_set_port(dp->input->source, PA_DROID_INPUT_PARKING, false);
++}
++
++static int card_set_profile(pa_card *c, pa_card_profile *new_profile) {
++    struct userdata *u;
++    pa_droid_mapping *am;
++    struct virtual_profile *new_vp = NULL;
++    struct virtual_profile *old_vp = NULL;
++    struct profile_data *nd, *od;
++    pa_queue *sink_inputs = NULL, *source_outputs = NULL;
++
++    pa_assert(c);
++    pa_assert(new_profile);
++    pa_assert_se(u = c->userdata);
++
++    nd = PA_CARD_PROFILE_DATA(new_profile);
++    od = PA_CARD_PROFILE_DATA(c->active_profile);
++
++    if (nd->profile == u->call_profile.profile)
++        new_vp = &u->call_profile;
++    if (nd->profile == u->ring_profile.profile)
++        new_vp = &u->ring_profile;
++    if (nd->profile == u->comm_profile.profile)
++        new_vp = &u->comm_profile;
++
++    if (new_vp) {
++        pa_log_debug("Setting new virtual profile.");
++        if (u->old_profile == NULL)
++            u->old_profile = od->profile;
++
++        park_profile(od->profile);
++
++        set_mode(u, new_vp->mode);
++
++        /* call mode specialities */
++        if (new_vp->profile == u->call_profile.profile) {
++            pa_droid_sink_set_voice_control(u->old_profile->output->sink, true);
++            if (!u->voice_source_routing)
++                pa_droid_source_set_routing(u->old_profile->input->source, false);
++        }
++        return 0;
++    }
++
++    if (od->profile == u->call_profile.profile)
++        old_vp = &u->call_profile;
++    if (od->profile == u->ring_profile.profile)
++        old_vp = &u->ring_profile;
++    if (od->profile == u->comm_profile.profile)
++        old_vp = &u->comm_profile;
++
++    if (old_vp) {
++        pa_assert(u->old_profile);
++
++        park_profile(nd->profile);
++
++        set_mode(u, AUDIO_MODE_NORMAL);
++
++        /* call mode specialities */
++        if (old_vp->profile == u->call_profile.profile) {
++            pa_droid_sink_set_voice_control(u->old_profile->output->sink, false);
++            if (!u->voice_source_routing)
++                pa_droid_source_set_routing(u->old_profile->input->source, true);
++        }
++
++        /* If new profile is the same as from which we switched to
++         * call profile, transfer ownership back to that profile.
++         * Otherwise destroy sinks & sources and switch to new profile. */
++        if (nd->profile == u->old_profile) {
++            u->old_profile = NULL;
++            return 0;
++        } else {
++            od->profile = u->old_profile;
++            u->old_profile = NULL;
++
++            /* Continue to sink-input transfer below */
++        }
++    }
++
++    /* If there are connected sink inputs/source outputs in old profile's sinks/sources move
++     * them all to new sinks/sources. */
++
++    if (od->profile && od->profile->output) {
++        do {
++            am = od->profile->output;
++
++            if (!am->sink)
++                continue;
++
++            if (nd->profile && nd->profile->output && am == nd->profile->output)
++                continue;
++
++            sink_inputs = pa_sink_move_all_start(am->sink, sink_inputs);
++            pa_droid_sink_free(am->sink);
++            am->sink = NULL;
++        } while(0);
++    }
++
++    if (od->profile && od->profile->input) {
++        do {
++            am = od->profile->input;
++
++            if (!am->source)
++                continue;
++
++            if (nd->profile && nd->profile->input && am == nd->profile->input)
++                continue;
++
++            source_outputs = pa_source_move_all_start(am->source, source_outputs);
++            pa_droid_source_free(am->source);
++            am->source = NULL;
++        } while(0);
++    }
++
++    if (nd->profile && nd->profile->output) {
++        am = nd->profile->output;
++
++        if (!am->sink)
++            am->sink = pa_droid_sink_new(u->module, u->modargs, __FILE__, &u->card_data, 0, am, u->card);
++
++        if (sink_inputs && am->sink) {
++            pa_sink_move_all_finish(am->sink, sink_inputs, false);
++            sink_inputs = NULL;
++        }
++    }
++
++    if (nd->profile && nd->profile->input) {
++        am = nd->profile->input;
++
++        if (!am->source)
++            am->source = pa_droid_source_new(u->module, u->modargs, __FILE__, &u->card_data, am, u->card);
++
++        if (source_outputs && am->source) {
++            pa_source_move_all_finish(am->source, source_outputs, false);
++            source_outputs = NULL;
++        }
++    }
++
++    if (sink_inputs)
++        pa_sink_move_all_fail(sink_inputs);
++
++    if (source_outputs)
++        pa_source_move_all_fail(source_outputs);
++
++    return 0;
++}
++
++
++int pa__init(pa_module *m) {
++    pa_modargs *ma = NULL;
++    pa_card_new_data data;
++    pa_droid_config_audio *config = NULL;
++    const char *module_id;
++    bool namereg_fail = false;
++    bool voice_source_routing = false;
++
++    pa_assert(m);
++
++    if (!(ma = pa_modargs_new(m->argument, valid_modargs))) {
++        pa_log("Failed to parse module argumets.");
++        goto fail;
++    }
++
++    struct userdata *u = pa_xnew0(struct userdata, 1);
++    u->core = m->core;
++
++    if (!(config = pa_droid_config_load(ma)))
++        goto fail;
++
++    if (pa_modargs_get_value_boolean(ma, "voice_source_routing", &voice_source_routing) < 0) {
++        pa_log("Failed to parse voice_source_routing argument.");
++        goto fail;
++    }
++    u->voice_source_routing = voice_source_routing;
++
++    module_id = pa_modargs_get_value(ma, "module_id", DEFAULT_MODULE_ID);
++
++    /* Ownership of config transfers to hw_module if opening of hw module succeeds. */
++    if (!(u->hw_module = pa_droid_hw_module_get(u->core, config, module_id)))
++        goto fail;
++
++    u->card_data.set_parameters = set_parameters_cb;
++    u->card_data.module_id = pa_xstrdup(module_id);
++    u->card_data.userdata = u;
++
++    u->profile_set = pa_droid_profile_set_new(u->hw_module->enabled_module);
++
++    pa_card_new_data_init(&data);
++    data.driver = __FILE__;
++    data.module = m;
++
++    set_card_name(ma, &data, u->hw_module->module_id);
++
++    /* We need to give pa_modargs_get_value_boolean() a pointer to a local
++     * variable instead of using &data.namereg_fail directly, because
++     * data.namereg_fail is a bitfield and taking the address of a bitfield
++     * variable is impossible. */
++    namereg_fail = data.namereg_fail;
++    if (pa_modargs_get_value_boolean(ma, "namereg_fail", &namereg_fail) < 0) {
++        pa_log("Failed to parse namereg_fail argument.");
++        pa_card_new_data_done(&data);
++        goto fail;
++    }
++    data.namereg_fail = namereg_fail;
++
++    add_profiles(u, data.profiles, data.ports);
++
++    if (pa_hashmap_isempty(data.profiles)) {
++        pa_log("Failed to find a working profile.");
++        pa_card_new_data_done(&data);
++        goto fail;
++    }
++
++    u->call_profile.profile = add_virtual_profile(u, VOICE_CALL_PROFILE_NAME,
++                                                  VOICE_CALL_PROFILE_DESC, data.profiles);
++    u->call_profile.mode = AUDIO_MODE_IN_CALL;
++    u->comm_profile.profile = add_virtual_profile(u, COMMUNICATION_PROFILE_NAME,
++                                                  COMMUNICATION_PROFILE_DESC, data.profiles);
++    u->comm_profile.mode = AUDIO_MODE_IN_COMMUNICATION;
++    u->ring_profile.profile = add_virtual_profile(u, RINGTONE_PROFILE_NAME,
++                                                  RINGTONE_PROFILE_DESC, data.profiles);
++    u->ring_profile.mode = AUDIO_MODE_RINGTONE;
++
++    add_disabled_profile(data.profiles);
++
++    pa_proplist_sets(data.proplist, PROP_DROID_HW_MODULE, u->hw_module->module_id);
++
++    u->card = pa_card_new(m->core, &data);
++    pa_card_new_data_done(&data);
++
++    if (!u->card) {
++        pa_log("Couldn't create card.");
++        goto fail;
++    }
++
++    u->card->userdata = u;
++    u->card->set_profile = card_set_profile;
++
++    u->modargs = ma;
++    u->module = m;
++
++    m->userdata = u;
++
++    init_profile(u);
++
++#ifdef HAVE_UDEV
++    u->extcon = pa_droid_extcon_new(m->core, u->card);
++#endif
++
++    return 0;
++
++fail:
++    if (ma)
++        pa_modargs_free(ma);
++
++    pa_xfree(config);
++
++    pa__done(m);
++
++    return -1;
++}
++
++void pa__done(pa_module *m) {
++    struct userdata *u;
++
++    pa_assert(m);
++
++    if ((u = m->userdata)) {
++
++        if (u->card && u->card->sinks)
++            pa_idxset_remove_all(u->card->sinks, (pa_free_cb_t) pa_droid_sink_free);
++
++        if (u->card && u->card->sources)
++            pa_idxset_remove_all(u->card->sources, (pa_free_cb_t) pa_droid_source_free);
++
++#ifdef HAVE_UDEV
++        if (u->extcon)
++            pa_droid_extcon_free(u->extcon);
++#endif
++
++        if (u->card)
++            pa_card_free(u->card);
++
++        if (u->modargs)
++            pa_modargs_free(u->modargs);
++
++        if (u->profile_set)
++            pa_droid_profile_set_free(u->profile_set);
++
++        if (u->card_data.module_id)
++            pa_xfree(u->card_data.module_id);
++
++        if (u->hw_module)
++            pa_droid_hw_module_unref(u->hw_module);
++
++        pa_xfree(u);
++    }
++}
+Index: pulseaudio/src/modules/droid/module-droid-sink.c
+===================================================================
+--- /dev/null
++++ pulseaudio/src/modules/droid/module-droid-sink.c
+@@ -0,0 +1,103 @@
++/*
++ * Copyright (C) 2013 Jolla Ltd.
++ *
++ * Contact: Juho Hämäläinen <juho.hamalainen@tieto.com>
++ *
++ * These PulseAudio Modules are free software; you can redistribute
++ * it and/or modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation
++ * version 2.1 of the License.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301
++ * USA.
++ */
++
++#ifdef HAVE_CONFIG_H
++#include <config.h>
++#endif
++
++#ifdef HAVE_VALGRIND_MEMCHECK_H
++#include <valgrind/memcheck.h>
++#endif
++
++#include <pulse/xmalloc.h>
++
++#include <pulsecore/core.h>
++#include <pulsecore/i18n.h>
++#include <pulsecore/module.h>
++#include <pulsecore/sink.h>
++#include <pulsecore/modargs.h>
++#include <pulsecore/log.h>
++#include <pulsecore/macro.h>
++
++#include "droid-util.h"
++#include "droid-sink.h"
++
++#include "module-droid-sink-symdef.h"
++
++PA_MODULE_AUTHOR("Juho Hämäläinen");
++PA_MODULE_DESCRIPTION("Droid sink");
++PA_MODULE_USAGE("master_sink=<sink to connect to> "
++                "sink_name=<name of created sink> "
++                "sco_fake_sink=<name of the fake sco sink used for hsp>");
++PA_MODULE_VERSION(PACKAGE_VERSION);
++
++static const char* const valid_modargs[] = {
++    "rate",
++    "flags",
++    "devices",
++    "sink_name",
++    "module_id",
++    "mute_routing_before",
++    "mute_routing_after",
++    "sink_buffer",
++    "deferred_volume",
++    "voice_volume_call_mode",
++    "voice_property_key",
++    "voice_property_value",
++    "voice_virtual_stream",
++    "sco_fake_sink",
++    NULL,
++};
++
++void pa__done(pa_module *m) {
++    pa_sink *sink;
++
++    pa_assert(m);
++
++    if ((sink = m->userdata))
++        pa_droid_sink_free(sink);
++}
++
++int pa__init(pa_module *m) {
++    pa_modargs *ma = NULL;
++
++    pa_assert(m);
++
++    if (!(ma = pa_modargs_new(m->argument, valid_modargs))) {
++        pa_log("Failed to parse module argumets.");
++        goto fail;
++    }
++
++    if (!(m->userdata = pa_droid_sink_new(m, ma, __FILE__, NULL, 0, NULL, NULL)))
++        goto fail;
++
++    pa_modargs_free(ma);
++
++    return 0;
++
++fail:
++    if (ma)
++        pa_modargs_free(ma);
++
++    pa__done(m);
++
++    return -1;
++}
+Index: pulseaudio/src/modules/droid/module-droid-source.c
+===================================================================
+--- /dev/null
++++ pulseaudio/src/modules/droid/module-droid-source.c
+@@ -0,0 +1,95 @@
++/*
++ * Copyright (C) 2013 Jolla Ltd.
++ *
++ * Contact: Juho Hämäläinen <juho.hamalainen@tieto.com>
++ *
++ * These PulseAudio Modules are free software; you can redistribute
++ * it and/or modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation
++ * version 2.1 of the License.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301
++ * USA.
++ */
++
++#ifdef HAVE_CONFIG_H
++#include <config.h>
++#endif
++
++#ifdef HAVE_VALGRIND_MEMCHECK_H
++#include <valgrind/memcheck.h>
++#endif
++
++#include <pulse/xmalloc.h>
++
++#include <pulsecore/core.h>
++#include <pulsecore/i18n.h>
++#include <pulsecore/module.h>
++#include <pulsecore/source.h>
++#include <pulsecore/modargs.h>
++#include <pulsecore/log.h>
++#include <pulsecore/macro.h>
++
++#include "droid-util.h"
++#include "droid-source.h"
++
++#include "module-droid-source-symdef.h"
++
++PA_MODULE_AUTHOR("Juho Hämäläinen");
++PA_MODULE_DESCRIPTION("Droid source");
++PA_MODULE_USAGE("master_source=<source to connect to> "
++                "source_name=<name of created source>");
++PA_MODULE_VERSION(PACKAGE_VERSION);
++
++static const char* const valid_modargs[] = {
++    "rate",
++    "flags",
++    "devices",
++    "source_name",
++    "module_id",
++    "source_buffer",
++    "deferred_volume",
++    NULL,
++};
++
++void pa__done(pa_module *m) {
++    pa_source *source;
++
++    pa_assert(m);
++
++    if ((source = m->userdata))
++        pa_droid_source_free(source);
++}
++
++int pa__init(pa_module *m) {
++    pa_modargs *ma = NULL;
++
++    pa_assert(m);
++
++    if (!(ma = pa_modargs_new(m->argument, valid_modargs))) {
++        pa_log("Failed to parse module argumets.");
++        goto fail;
++    }
++
++    if (!(m->userdata = pa_droid_source_new(m, ma, __FILE__, NULL, NULL, NULL)))
++        goto fail;
++
++    pa_modargs_free(ma);
++
++    return 0;
++
++fail:
++    if (ma)
++        pa_modargs_free(ma);
++
++    pa__done(m);
++
++    return -1;
++}
+Index: pulseaudio/po/POTFILES.in
+===================================================================
+--- pulseaudio.orig/po/POTFILES.in
++++ pulseaudio/po/POTFILES.in
+@@ -16,6 +16,7 @@ src/modules/alsa/module-alsa-sink.c
+ src/modules/alsa/module-alsa-source.c
+ src/modules/bluetooth/module-bluez4-device.c
+ src/modules/bluetooth/module-bluez5-device.c
++src/modules/droid/module-droid-card.c
+ src/modules/echo-cancel/module-echo-cancel.c
+ src/modules/gconf/gconf-helper.c
+ src/modules/gconf/module-gconf.c

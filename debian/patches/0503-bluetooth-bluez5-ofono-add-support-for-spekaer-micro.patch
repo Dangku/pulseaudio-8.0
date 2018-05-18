@@ -1,0 +1,78 @@
+From 8b4525c069d19f783ea2a70415621da71d1fede6 Mon Sep 17 00:00:00 2001
+From: Simon Fels <simon.fels@canonical.com>
+Date: Sun, 1 Nov 2015 16:40:16 +0100
+Subject: [PATCH 503/507] bluetooth: bluez5: ofono: add support for
+ spekaer/microphone gain setting
+
+---
+ src/modules/bluetooth/backend-ofono.c | 47 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 47 insertions(+)
+
+diff --git a/src/modules/bluetooth/backend-ofono.c b/src/modules/bluetooth/backend-ofono.c
+index c77be54..1c10716 100644
+--- a/src/modules/bluetooth/backend-ofono.c
++++ b/src/modules/bluetooth/backend-ofono.c
+@@ -209,6 +209,51 @@ static void hf_audio_agent_transport_release(pa_bluetooth_transport *t) {
+         pa_bluetooth_transport_set_state(t, PA_BLUETOOTH_TRANSPORT_STATE_IDLE);
+     }
+ }
++
++static void set_property(pa_dbus_connection *conn, const char *bus, const char *path, const char *interface,
++                         const char *prop_name, int prop_type, void *prop_value) {
++    DBusMessage *m;
++    DBusMessageIter i;
++
++    pa_assert(conn);
++    pa_assert(path);
++    pa_assert(interface);
++    pa_assert(prop_name);
++
++    pa_assert_se(m = dbus_message_new_method_call(bus, path, interface, "SetProperty"));
++    dbus_message_iter_init_append(m, &i);
++    dbus_message_iter_append_basic(&i, DBUS_TYPE_STRING, &prop_name);
++    pa_dbus_append_basic_variant(&i, prop_type, prop_value);
++
++    dbus_message_set_no_reply(m, true);
++    pa_assert_se(dbus_connection_send(pa_dbus_connection_get(conn), m, NULL));
++    dbus_message_unref(m);
++}
++
++static void hf_audio_card_set_speaker_gain(pa_bluetooth_transport *t, uint16_t gain)
++{
++    struct hf_audio_card *card = t->userdata;
++
++    pa_assert(card);
++
++    pa_log_debug("Setting speaker gain for card %s to %u",
++                 card->path, gain);
++
++    set_property(card->backend->connection, OFONO_SERVICE, card->path,
++                 HF_AUDIO_CARD_INTERFACE, "SpeakerGain", DBUS_TYPE_UINT16, &gain);
++}
++
++static void hf_audio_card_set_microphone_gain(pa_bluetooth_transport *t, uint16_t gain)
++{
++    struct hf_audio_card *card = t->userdata;
++
++    pa_assert(card);
++
++    pa_log_debug("Setting microphone gain for card %s to %u",
++                 card->path, gain);
++
++    set_property(card->backend->connection, OFONO_SERVICE, card->path,
++                 HF_AUDIO_CARD_INTERFACE, "MicrophoneGain", DBUS_TYPE_UINT16, &gain);
+ }
+ 
+ static void hf_audio_agent_card_found(pa_bluetooth_backend *backend, const char *path, DBusMessageIter *props_i) {
+@@ -271,6 +316,8 @@ static void hf_audio_agent_card_found(pa_bluetooth_backend *backend, const char
+     card->transport = pa_bluetooth_transport_new(d, backend->ofono_bus_id, path, profile, NULL, 0);
+     card->transport->acquire = hf_audio_agent_transport_acquire;
+     card->transport->release = hf_audio_agent_transport_release;
++    card->transport->set_speaker_gain = hf_audio_card_set_speaker_gain;
++    card->transport->set_microphone_gain = hf_audio_card_set_microphone_gain;
+     card->transport->userdata = card;
+ 
+     pa_bluetooth_transport_put(card->transport);
+-- 
+2.6.2
+

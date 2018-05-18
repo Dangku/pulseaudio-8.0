@@ -1,0 +1,122 @@
+From cb78d6f57c00f3694dae9110f7a7d6f80e3344ac Mon Sep 17 00:00:00 2001
+From: Tanu Kaskinen <tanuk@iki.fi>
+Date: Thu, 16 Mar 2017 23:48:43 +0200
+Subject: [PATCH] bluez5-util: fix profile waiting logic
+
+There were two bugs in the old logic. The first one:
+
+If a device has two profiles, the old code would start the wait timer
+when the first profile connects, but when the second profile connects,
+the timer would not get stopped and the CONNECTION_CHANGED hook would
+not get fired, because the code for that was inside an if block that
+only gets executed when the first profile connects. As a result,
+module-bluez5-device loading would always be delayed until the wait
+timeout expires.
+
+The second bug:
+
+A crash was observed in device_start_waiting_for_profiles(). That
+function is called whenever the connected profile count changes from 0
+to 1. The function also has an assertion that checks that the timer is
+not running when the function is called. That assertion crashed in the
+following scenario with a headset that supports HSP and A2DP:
+
+1. First HSP gets connected. The timer is started.
+
+2. Then HSP gets disconnected for some reason. The timer is still
+running.
+
+3. Then A2DP gets connected. device_start_waiting_for_profiles() is
+called, because the connected profile count changed from 0 to 1 again.
+The timer is already running, so the assertion fails.
+
+First I thought I'd remove the assertion from
+device_start_waiting_for_profiles() and just restart the timer on the
+second call, but then I figured that when the device returns to the
+"everything disconnected" state in step 2, it would be better to stop
+the timer. The purpose of the timer is to delay the notification of the
+device becoming connected, but if the device becomes disconnected during
+the waiting period, the notification doesn't make sense any more, and
+therefore the timer doesn't make sense either.
+
+BugLink: https://bugs.freedesktop.org/show_bug.cgi?id=100237
+---
+ src/modules/bluetooth/bluez5-util.c | 49 ++++++++++++++++++++++++++-----------
+ 1 file changed, 35 insertions(+), 14 deletions(-)
+
+diff --git a/src/modules/bluetooth/bluez5-util.c b/src/modules/bluetooth/bluez5-util.c
+index 107255184..8e50e0be7 100644
+--- a/src/modules/bluetooth/bluez5-util.c
++++ b/src/modules/bluetooth/bluez5-util.c
+@@ -259,6 +259,9 @@ static void device_start_waiting_for_profiles(pa_bluetooth_device *device) {
+ 
+ void pa_bluetooth_transport_set_state(pa_bluetooth_transport *t, pa_bluetooth_transport_state_t state) {
+     bool old_any_connected;
++    unsigned n_disconnected_profiles;
++    bool new_device_appeared;
++    bool device_disconnected;
+ 
+     pa_assert(t);
+ 
+@@ -274,26 +277,44 @@ void pa_bluetooth_transport_set_state(pa_bluetooth_transport *t, pa_bluetooth_tr
+ 
+     pa_hook_fire(&t->device->discovery->hooks[PA_BLUETOOTH_HOOK_TRANSPORT_STATE_CHANGED], t);
+ 
+-    if (old_any_connected != pa_bluetooth_device_any_transport_connected(t->device)) {
+-        unsigned n_disconnected_profiles;
++    /* If there are profiles that are expected to get connected soon (based
++     * on the UUID list), we wait for a bit before announcing the new
++     * device, so that all profiles have time to get connected before the
++     * card object is created. If we didn't wait, the card would always
++     * have only one profile marked as available in the initial state,
++     * which would prevent module-card-restore from restoring the initial
++     * profile properly. */
+ 
+-        /* If there are profiles that are expected to get conneced soon (based
+-         * on the UUID list), we wait for a bit before announcing the new
+-         * device, so that all profiles have time to get connected before the
+-         * card object is created. If we didn't wait, the card would always
+-         * have only one profile marked as available in the initial state,
+-         * which would prevent module-card-restore from restoring initial
+-         * profile properly. */
++    n_disconnected_profiles = device_count_disconnected_profiles(t->device);
+ 
+-        n_disconnected_profiles = device_count_disconnected_profiles(t->device);
++    new_device_appeared = !old_any_connected && pa_bluetooth_device_any_transport_connected(t->device);
++    device_disconnected = old_any_connected && !pa_bluetooth_device_any_transport_connected(t->device);
+ 
+-        if (n_disconnected_profiles == 0)
+-            device_stop_waiting_for_profiles(t->device);
+-
+-        if (!old_any_connected && n_disconnected_profiles > 0)
++    if (new_device_appeared) {
++        if (n_disconnected_profiles > 0)
+             device_start_waiting_for_profiles(t->device);
+         else
+             pa_hook_fire(&t->device->discovery->hooks[PA_BLUETOOTH_HOOK_DEVICE_CONNECTION_CHANGED], t->device);
++        return;
++    }
++
++    if (device_disconnected) {
++        if (t->device->wait_for_profiles_timer) {
++            /* If the timer is still running when the device disconnects, we
++             * never sent the notification of the device getting connected, so
++             * we don't need to send a notification about the disconnection
++             * either. Let's just stop the timer. */
++            device_stop_waiting_for_profiles(t->device);
++        } else
++            pa_hook_fire(&t->device->discovery->hooks[PA_BLUETOOTH_HOOK_DEVICE_CONNECTION_CHANGED], t->device);
++        return;
++    }
++
++    if (n_disconnected_profiles == 0 && t->device->wait_for_profiles_timer) {
++        /* All profiles are now connected, so we can stop the wait timer and
++         * send a notification of the new device. */
++        device_stop_waiting_for_profiles(t->device);
++        pa_hook_fire(&t->device->discovery->hooks[PA_BLUETOOTH_HOOK_DEVICE_CONNECTION_CHANGED], t->device);
+     }
+ }
+ 
+-- 
+2.11.0
+

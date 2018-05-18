@@ -1,0 +1,156 @@
+From 04040c522f5f62dda50ac927e92453381d419f09 Mon Sep 17 00:00:00 2001
+From: Tanu Kaskinen <tanuk@iki.fi>
+Date: Fri, 4 Mar 2016 15:23:30 +0200
+Subject: card: add preferred_{input, output}_port
+
+I will modify module-switch-on-port-available so that it will keep
+track of which input and output port the user prefers on the card,
+based on the user's profile and port switches. The preference needs
+to be saved on disk, for which I will use module-card-restore.
+
+To facilitate communication between the two modules, this patch adds
+preferred_input_port and preferred_output_port fields to pa_card, and
+a hook for monitoring the variable changes. It would be nice if the
+two modules would communicate directly with each other, but
+implementing that would be somewhat complicated, so I chose this time
+for adding the functionality to the core. In theory some other routing
+module might want to manage the new variables instead of
+module-switch-on-port-available, but admittedly that's not very likely
+to happen...
+
+diff --git a/src/pulsecore/card.c b/src/pulsecore/card.c
+index b6cbbf7..0eaccff 100644
+--- a/src/pulsecore/card.c
++++ b/src/pulsecore/card.c
+@@ -103,6 +103,15 @@ void pa_card_new_data_set_profile(pa_card_new_data *data, const char *profile) {
+     data->active_profile = pa_xstrdup(profile);
+ }
+ 
++void pa_card_new_data_set_preferred_port(pa_card_new_data *data, pa_direction_t direction, pa_device_port *port) {
++    pa_assert(data);
++
++    if (direction == PA_DIRECTION_INPUT)
++        data->preferred_input_port = port;
++    else
++        data->preferred_output_port = port;
++}
++
+ void pa_card_new_data_done(pa_card_new_data *data) {
+ 
+     pa_assert(data);
+@@ -169,6 +178,9 @@ pa_card *pa_card_new(pa_core *core, pa_card_new_data *data) {
+     PA_HASHMAP_FOREACH(port, c->ports, state)
+         port->card = c;
+ 
++    c->preferred_input_port = data->preferred_input_port;
++    c->preferred_output_port = data->preferred_output_port;
++
+     if (data->active_profile)
+         if ((c->active_profile = pa_hashmap_get(c->profiles, data->active_profile)))
+             c->save_profile = data->save_profile;
+@@ -309,6 +321,40 @@ int pa_card_set_profile(pa_card *c, pa_card_profile *profile, bool save) {
+     return 0;
+ }
+ 
++void pa_card_set_preferred_port(pa_card *c, pa_direction_t direction, pa_device_port *port) {
++    pa_device_port *old_port;
++    const char *old_port_str;
++    const char *new_port_str;
++    pa_card_preferred_port_changed_hook_data data;
++
++    pa_assert(c);
++
++    if (direction == PA_DIRECTION_INPUT) {
++        old_port = c->preferred_input_port;
++        old_port_str = c->preferred_input_port ? c->preferred_input_port->name : "(unset)";
++    } else {
++        old_port = c->preferred_output_port;
++        old_port_str = c->preferred_output_port ? c->preferred_output_port->name : "(unset)";
++    }
++
++    if (port == old_port)
++        return;
++
++    new_port_str = port ? port->name : "(unset)";
++
++    if (direction == PA_DIRECTION_INPUT) {
++        c->preferred_input_port = port;
++        pa_log_debug("%s: preferred_input_port: %s -> %s", c->name, old_port_str, new_port_str);
++    } else {
++        c->preferred_output_port = port;
++        pa_log_debug("%s: preferred_output_port: %s -> %s", c->name, old_port_str, new_port_str);
++    }
++
++    data.card = c;
++    data.direction = direction;
++    pa_hook_fire(&c->core->hooks[PA_CORE_HOOK_CARD_PREFERRED_PORT_CHANGED], &data);
++}
++
+ int pa_card_suspend(pa_card *c, bool suspend, pa_suspend_cause_t cause) {
+     pa_sink *sink;
+     pa_source *source;
+diff --git a/src/pulsecore/card.h b/src/pulsecore/card.h
+index 30bfc0e..79966f3 100644
+--- a/src/pulsecore/card.h
++++ b/src/pulsecore/card.h
+@@ -79,6 +79,8 @@ struct pa_card {
+     pa_card_profile *active_profile;
+ 
+     pa_hashmap *ports;
++    pa_device_port *preferred_input_port;
++    pa_device_port *preferred_output_port;
+ 
+     bool save_profile:1;
+ 
+@@ -98,12 +100,19 @@ typedef struct pa_card_new_data {
+     char *active_profile;
+ 
+     pa_hashmap *ports;
++    pa_device_port *preferred_input_port;
++    pa_device_port *preferred_output_port;
+ 
+     bool namereg_fail:1;
+ 
+     bool save_profile:1;
+ } pa_card_new_data;
+ 
++typedef struct {
++    pa_card *card;
++    pa_direction_t direction;
++} pa_card_preferred_port_changed_hook_data;
++
+ pa_card_profile *pa_card_profile_new(const char *name, const char *description, size_t extra);
+ void pa_card_profile_free(pa_card_profile *c);
+ 
+@@ -113,6 +122,7 @@ void pa_card_profile_set_available(pa_card_profile *c, pa_available_t available)
+ pa_card_new_data *pa_card_new_data_init(pa_card_new_data *data);
+ void pa_card_new_data_set_name(pa_card_new_data *data, const char *name);
+ void pa_card_new_data_set_profile(pa_card_new_data *data, const char *profile);
++void pa_card_new_data_set_preferred_port(pa_card_new_data *data, pa_direction_t direction, pa_device_port *port);
+ void pa_card_new_data_done(pa_card_new_data *data);
+ 
+ pa_card *pa_card_new(pa_core *c, pa_card_new_data *data);
+@@ -122,6 +132,8 @@ void pa_card_add_profile(pa_card *c, pa_card_profile *profile);
+ 
+ int pa_card_set_profile(pa_card *c, pa_card_profile *profile, bool save);
+ 
++void pa_card_set_preferred_port(pa_card *c, pa_direction_t direction, pa_device_port *port);
++
+ int pa_card_suspend(pa_card *c, bool suspend, pa_suspend_cause_t cause);
+ 
+ #endif
+diff --git a/src/pulsecore/core.h b/src/pulsecore/core.h
+index 1a3c490..69ab4d0 100644
+--- a/src/pulsecore/core.h
++++ b/src/pulsecore/core.h
+@@ -120,6 +120,7 @@ typedef enum pa_core_hook {
+     PA_CORE_HOOK_CARD_NEW,
+     PA_CORE_HOOK_CARD_PUT,
+     PA_CORE_HOOK_CARD_UNLINK,
++    PA_CORE_HOOK_CARD_PREFERRED_PORT_CHANGED,
+     PA_CORE_HOOK_CARD_PROFILE_CHANGED,
+     PA_CORE_HOOK_CARD_PROFILE_ADDED,
+     PA_CORE_HOOK_CARD_PROFILE_AVAILABLE_CHANGED,
+-- 
+cgit v0.10.2
+

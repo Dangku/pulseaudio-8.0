@@ -1,0 +1,14 @@
+Index: pulseaudio-8.0/src/modules/droid/module-droid-card.c
+===================================================================
+--- pulseaudio-8.0.orig/src/modules/droid/module-droid-card.c
++++ pulseaudio-8.0/src/modules/droid/module-droid-card.c
+@@ -915,6 +915,9 @@ int pa__init(pa_module *m) {
+     u->card->userdata = u;
+     u->card->set_profile = card_set_profile;
+ 
++    pa_card_choose_initial_profile(u->card);
++    pa_card_put(u->card);
++
+     u->modargs = ma;
+     u->module = m;
+ 

@@ -1,0 +1,71 @@
+From 0603a31eb0a5d6a0247b1f754501230f97749aca Mon Sep 17 00:00:00 2001
+From: Simon Fels <simon.fels@canonical.com>
+Date: Sun, 1 Nov 2015 16:51:01 +0100
+Subject: [PATCH 507/507] bluetooth: bluez5: drop save/restore of SCO
+ sink/source volume set callbacks
+
+Still needs to be verified that this can be dropped.
+---
+ src/modules/bluetooth/module-bluez5-device.c | 24 ------------------------
+ 1 file changed, 24 deletions(-)
+
+diff --git a/src/modules/bluetooth/module-bluez5-device.c b/src/modules/bluetooth/module-bluez5-device.c
+index f1e887c..c153aa5 100644
+--- a/src/modules/bluetooth/module-bluez5-device.c
++++ b/src/modules/bluetooth/module-bluez5-device.c
+@@ -109,9 +109,7 @@ typedef struct sbc_info {
+ 
+ struct hsp_info {
+     pa_sink *sco_sink;
+-    void (*sco_sink_set_volume)(pa_sink *s);
+     pa_source *sco_source;
+-    void (*sco_source_set_volume)(pa_source *s);
+ };
+ 
+ struct userdata {
+@@ -2067,22 +2065,6 @@ static pa_card_profile *create_card_profile(struct userdata *u, const char *uuid
+     return cp;
+ }
+ 
+-static void save_sco_volume_callbacks(struct userdata *u) {
+-    pa_assert(u);
+-    pa_assert(USE_SCO_OVER_PCM(u));
+-
+-    u->hsp.sco_sink_set_volume = u->hsp.sco_sink->set_volume;
+-    u->hsp.sco_source_set_volume = u->hsp.sco_source->set_volume;
+-}
+-
+-static void restore_sco_volume_callbacks(struct userdata *u) {
+-    pa_assert(u);
+-    pa_assert(USE_SCO_OVER_PCM(u));
+-
+-    pa_sink_set_set_volume_callback(u->hsp.sco_sink, u->hsp.sco_sink_set_volume);
+-    pa_source_set_set_volume_callback(u->hsp.sco_source, u->hsp.sco_source_set_volume);
+-}
+-
+ /* Run from main thread */
+ static int set_profile_cb(pa_card *c, pa_card_profile *new_profile) {
+     struct userdata *u;
+@@ -2231,9 +2213,6 @@ static int add_card(struct userdata *u) {
+     p = PA_CARD_PROFILE_DATA(u->card->active_profile);
+     u->profile = *p;
+ 
+-    if (USE_SCO_OVER_PCM(u))
+-        save_sco_volume_callbacks(u);
+-
+     pa_log_debug("Created card (current profile %s)",
+                  pa_bluetooth_profile_to_string(u->profile));
+ 
+@@ -2597,9 +2576,6 @@ void pa__done(pa_module *m) {
+     if (u->sbc_info.sbc_initialized)
+         sbc_finish(&u->sbc_info.sbc);
+ 
+-    if (USE_SCO_OVER_PCM(u))
+-        restore_sco_volume_callbacks(u);
+-
+     if (u->msg)
+         pa_xfree(u->msg);
+ 
+-- 
+2.6.2
+

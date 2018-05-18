@@ -1,0 +1,220 @@
+From: Ricardo Salveti de Araujo <rsalveti@rsalveti.net>
+Date: Thu, 17 Jul 2014 19:34:44 -0300
+Subject: [PATCH] module-bluez4-device: Allow leaving transport running
+ while sink and source are suspended.
+
+There are some cases where keeping the SCO transport running even when
+SCO sink and source are suspended is needed. This patch allows keeping
+the transport running when SCO sink has property
+bluetooth.hsp.prevent.suspend.transport set as true.
+
+Patch done by Juho Hamalainen <juho.hamalainen@tieto.com>
+
+Corner-case specific patch (pulse droid), not upstreamable.
+
+Signed-off-by: Ricardo Salveti de Araujo <rsalveti@rsalveti.net>
+---
+ src/modules/bluetooth/bluez4-util.c          | 23 +++++++
+ src/modules/bluetooth/module-bluez4-device.c | 85 ++++++++++++++++++++++++-
+ 2 files changed, 106 insertions(+), 2 deletions(-)
+
+Index: pulseaudio/src/modules/bluetooth/bluez4-util.c
+===================================================================
+--- pulseaudio.orig/src/modules/bluetooth/bluez4-util.c
++++ pulseaudio/src/modules/bluetooth/bluez4-util.c
+@@ -26,6 +26,7 @@
+ #include <pulsecore/core-util.h>
+ #include <pulsecore/shared.h>
+ #include <pulsecore/dbus-shared.h>
++#include <pulse/rtclock.h>
+ 
+ #include "bluez4-util.h"
+ #include "a2dp-codecs.h"
+@@ -59,6 +60,8 @@
+     " </interface>"                                                     \
+     "</node>"
+ 
++#define RACE_CONDITION_TIME 1000000  // 1 second
++
+ struct pa_bluez4_discovery {
+     PA_REFCNT_DECLARE;
+ 
+@@ -504,6 +507,9 @@ static int parse_audio_property(pa_bluez
+     DBusMessageIter variant_i;
+     bool is_audio_interface;
+     pa_bluez4_profile_t p = PA_BLUEZ4_PROFILE_OFF;
++    pa_usec_t tstamp_now;
++    static pa_usec_t tstamp_prev = 0;
++    DBusMessage *m;
+ 
+     pa_assert(d);
+     pa_assert(interface);
+@@ -535,6 +541,23 @@ static int parse_audio_property(pa_bluez
+                 pa_bluez4_transport_state_t old_state;
+ 
+                 pa_log_debug("Device %s interface %s property 'State' changed to value '%s'", d->path, interface, value);
++                /* Device may change state again (e.g. suspend itself) before previous state change
++                 * message has been parsed here. When this take place sink state in here and bluez
++                 * will be out-of-sync. This may generate endless transport acquire/release loop
++                 * which will be sustained by this module. When we notice this to be ongoing
++                 * message is ignored and current state is queried with GetProperties. */
++                if (pa_streq(interface, "org.bluez.AudioSink") && state == PA_BLUEZ4_AUDIO_STATE_CONNECTED) {
++                   tstamp_now = pa_rtclock_now();
++                   if (tstamp_prev != 0 && tstamp_now - tstamp_prev < RACE_CONDITION_TIME) {
++                       pa_log_debug("Race condition. Message ignored.");
++                       tstamp_prev = 0;
++                       pa_assert_se(m = dbus_message_new_method_call("org.bluez", d->path, "org.bluez.AudioSink", "GetProperties"));
++                       send_and_add_to_pending(d->discovery, m, get_properties_reply, d);
++
++                       return 0;
++                   }
++                   tstamp_prev = tstamp_now;
++                }
+ 
+                 if (state == PA_BLUEZ4_AUDIO_STATE_INVALID)
+                     return -1;
+Index: pulseaudio/src/modules/bluetooth/module-bluez4-device.c
+===================================================================
+--- pulseaudio.orig/src/modules/bluetooth/module-bluez4-device.c
++++ pulseaudio/src/modules/bluetooth/module-bluez4-device.c
+@@ -184,6 +184,9 @@ struct userdata {
+     pa_modargs *modargs;
+ 
+     int stream_write_type;
++
++    pa_hook_slot *sco_sink_proplist_changed_slot;
++    bool prevent_suspend_transport;
+ };
+ 
+ enum {
+@@ -377,6 +380,67 @@ static int bt_transport_acquire(struct u
+     return 0;
+ }
+ 
++#define HSP_PREVENT_SUSPEND_STR "bluetooth.hsp.prevent.suspend.transport"
++
++/* Check and update prevent_suspend_transport value from sco sink proplist.
++ *
++ * Return < 0 if sink proplist doesn't contain HSP_PREVENT_SUSPEND_STR value,
++ * 1 if value is 'true'
++ * 0 if value is something else. */
++static int check_proplist(struct userdata *u) {
++    int ret;
++    const char *str;
++
++    pa_assert(u);
++    pa_assert(u->hsp.sco_sink);
++
++    if ((str = pa_proplist_gets(u->hsp.sco_sink->proplist, HSP_PREVENT_SUSPEND_STR))) {
++        if (pa_streq(str, "true"))
++            ret = 1;
++        else
++            ret = 0;
++    } else
++        ret = -1;
++
++    u->prevent_suspend_transport = ret == 1;
++
++    pa_log_debug("Set %s %s", HSP_PREVENT_SUSPEND_STR, u->prevent_suspend_transport ? "true" : "false");
++
++    return ret;
++}
++
++/* There are cases where keeping the transport running even when sco sink and source are suspended
++ * is needed.
++ * To work with these cases, check sco.sink for bluetooth.hsp.prevent.suspend.transport value, and
++ * when set to true prevent closing the transport when sink suspends.
++ * Also, if the sink&source are suspended when sco-sink suspend.transport value changes to true,
++ * bring sco transport up. When suspend.transport value changes to false while sink&source are suspended,
++ * tear down the transport. */
++static pa_hook_result_t update_allow_release_cb(pa_core *c, pa_sink *s, struct userdata *u) {
++    pa_assert(u);
++    pa_assert(s);
++
++    if (!u->hsp.sco_sink || u->hsp.sco_sink != s)
++        return PA_HOOK_OK;
++
++    if (check_proplist(u) < 0)
++        return PA_HOOK_OK;
++
++    if (!USE_SCO_OVER_PCM(u)) {
++        pa_log_debug("SCO sink not available.");
++        return PA_HOOK_OK;
++    }
++
++    if (!PA_SINK_IS_OPENED(pa_sink_get_state(u->hsp.sco_sink)) &&
++        !PA_SOURCE_IS_OPENED(pa_source_get_state(u->hsp.sco_source))) {
++
++        /* Clear all suspend bits, effectively resuming SCO sink for a while. */
++        pa_sink_suspend(s, false, PA_SUSPEND_ALL);
++    }
++
++    return PA_HOOK_OK;
++}
++
+ /* Run from IO thread */
+ static int sink_process_msg(pa_msgobject *o, int code, void *data, int64_t offset, pa_memchunk *chunk) {
+     struct userdata *u = PA_SINK(o)->userdata;
+@@ -1425,6 +1489,10 @@ static int sco_over_pcm_state_update(str
+         if (u->stream_fd < 0)
+             return 0;
+ 
++        if (check_proplist(u) == 1) {
++            pa_log_debug("Suspend prevention active, not closing SCO over PCM");
++            return 0;
++        }
+         pa_log_debug("Closing SCO over PCM");
+ 
+         bt_transport_release(u);
+@@ -1468,6 +1536,11 @@ static pa_hook_result_t transport_nrec_c
+     if (t != u->transport)
+         return PA_HOOK_OK;
+ 
++    if (!u->source) {
++        pa_log_warn("trying to change bluetooth source property, but source doesn't exist.");
++        return PA_HOOK_OK;
++    }
++
+     p = pa_proplist_new();
+     pa_proplist_sets(p, "bluetooth.nrec", t->nrec ? "1" : "0");
+     pa_source_update_proplist(u->source, PA_UPDATE_REPLACE, p);
+@@ -1830,7 +1903,7 @@ static int setup_transport(struct userda
+     pa_bluez4_transport *t;
+ 
+     pa_assert(u);
+-    pa_assert(!u->transport);
++    pa_assert(!u->transport_acquired);
+     pa_assert(u->profile != PA_BLUEZ4_PROFILE_OFF);
+ 
+     /* check if profile has a transport */
+@@ -1910,7 +1983,8 @@ static void stop_thread(struct userdata
+ 
+     if (u->transport) {
+         bt_transport_release(u);
+-        u->transport = NULL;
++        /* Do not set transport pointer to NULL. When failing to switch
++         * profile NULL u->transport would assert. */
+     }
+ 
+     if (u->sink) {
+@@ -2509,6 +2583,10 @@ int pa__init(pa_module *m) {
+         pa_hook_connect(pa_bluez4_discovery_hook(u->discovery, PA_BLUEZ4_HOOK_TRANSPORT_SPEAKER_GAIN_CHANGED),
+                         PA_HOOK_NORMAL, (pa_hook_cb_t) transport_speaker_gain_changed_cb, u);
+ 
++    u->sco_sink_proplist_changed_slot =
++        pa_hook_connect(&u->core->hooks[PA_CORE_HOOK_SINK_PROPLIST_CHANGED],
++                        PA_HOOK_NORMAL, (pa_hook_cb_t) update_allow_release_cb, u);
++
+     /* Add the card structure. This will also initialize the default profile */
+     if (add_card(u) < 0)
+         goto fail;
+@@ -2588,6 +2666,9 @@ void pa__done(pa_module *m) {
+     if (u->transport_speaker_changed_slot)
+         pa_hook_slot_free(u->transport_speaker_changed_slot);
+ 
++    if (u->sco_sink_proplist_changed_slot)
++        pa_hook_slot_free(u->sco_sink_proplist_changed_slot);
++
+     if (USE_SCO_OVER_PCM(u))
+         restore_sco_volume_callbacks(u);
+ 

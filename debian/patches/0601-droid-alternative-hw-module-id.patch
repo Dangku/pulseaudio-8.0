@@ -1,0 +1,38 @@
+Subject: Add workaround for MTK devices
+Author: Rex Tsai <rex.tsai@canonical.com>
+Forwarded: no
+
+Index: pulseaudio/src/modules/droid/droid-util.c
+===================================================================
+--- pulseaudio.orig/src/modules/droid/droid-util.c
++++ pulseaudio/src/modules/droid/droid-util.c
+@@ -1358,8 +1358,13 @@ static pa_droid_hw_module *droid_hw_modu
+ 
+     hw_get_module_by_class(AUDIO_HARDWARE_MODULE_ID, module->name, (const hw_module_t**) &hwmod);
+     if (!hwmod) {
+-        pa_log("Failed to get hw module %s.", module->name);
+-        goto fail;
++        /* alternative hardware module id for MTK. */
++        pa_log("Failed to get hw module id: %s name: %s, trying alternative.", AUDIO_HARDWARE_MODULE_ID, module->name);
++        hw_get_module_by_class(AUDIO_HARDWARE_MODULE_ID2, module->name, (const hw_module_t**) &hwmod);
++        if (!hwmod) {
++            pa_log("Failed to get hw module id: %s name: %s.", AUDIO_HARDWARE_MODULE_ID2, module->name);
++            goto fail;
++        }
+     }
+ 
+     pa_log_info("Loaded hw module %s (HAL %d.%d.%d)", module->name,
+Index: pulseaudio/src/modules/droid/droid-util.h
+===================================================================
+--- pulseaudio.orig/src/modules/droid/droid-util.h
++++ pulseaudio/src/modules/droid/droid-util.h
+@@ -54,6 +54,9 @@
+ 
+ #define PA_DROID_PRIMARY_DEVICE     "primary"
+ 
++/* Workaround for MTK */
++#define AUDIO_HARDWARE_MODULE_ID2 "libaudio"
++
+ typedef struct pa_droid_hw_module pa_droid_hw_module;
+ typedef struct pa_droid_stream pa_droid_stream;
+ typedef struct pa_droid_card_data pa_droid_card_data;

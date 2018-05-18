@@ -1,0 +1,2 @@
+libpulsecommon 8.0 libpulse0 (= ${binary:Version})
+libpulsecore 8.0 pulseaudio (= ${binary:Version})

@@ -1,0 +1,65 @@
+From 2250dbfd6968bd9ce295fc7bef8595b2c6ef6a44 Mon Sep 17 00:00:00 2001
+From: Tanu Kaskinen <tanuk@iki.fi>
+Date: Wed, 12 Oct 2016 17:20:39 +0300
+Subject: [PATCH] bluetooth-policy: do A2DP profile restoring a bit later
+
+This fixes a crash that happens if the bluetooth headset is the only
+non-monitor source in the system and the last "phone" stream dies.
+When the stream dies, the native protocol calls pa_source_output_unlink()
+and would call pa_source_output_unref() next, but without this patch,
+things happen during the unlinking, and the unreffing ends up being
+performed on a stream that is already freed.
+
+pa_source_output_unlink() fires the "unlink" hook before doing anything
+else. module-bluetooth-policy then switches the headset profile from HSP
+to A2DP within that hook. The HSP source gets removed, and at this point
+the dying stream is still connected to it, and needs to be rescued.
+Rescuing fails, because there are no other sources in the system, so the
+stream gets killed. The native protocol has a kill callback, which again
+calls pa_source_output_unlink() and pa_source_output_unref(). This is
+the point where the native protocol drops its own reference to the
+stream, but another unref call is waiting to be executed once we return
+from the original unlink call.
+
+I first tried to avoid the double unreffing by making it safe to do
+unlinking recursively, but I found out that there's code that assumes
+that once unlink() returns, unlinking has actually occurred (a
+reasonable assumption), and at least with my implementation this was not
+guaranteed. I now think that we must avoid situations where unlinking
+happens recursively. It's just too hairy to deal with. This patch moves
+the bluetooth profile switch to happen at a time when the dead stream
+isn't any more connected to the source, so it doesn't have to be
+rescued or killed.
+
+BugLink: https://bugs.freedesktop.org/show_bug.cgi?id=97906
+---
+ src/modules/bluetooth/module-bluetooth-policy.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/modules/bluetooth/module-bluetooth-policy.c b/src/modules/bluetooth/module-bluetooth-policy.c
+index e62a114..df702cc 100644
+--- a/src/modules/bluetooth/module-bluetooth-policy.c
++++ b/src/modules/bluetooth/module-bluetooth-policy.c
+@@ -267,8 +267,8 @@ static pa_hook_result_t source_output_unlink_hook_callback(pa_core *c, pa_source
+     if (ignore_output(source_output))
+         return PA_HOOK_OK;
+ 
+-    /* If there are still some source outputs do nothing (count is with *this* source_output, so +1) */
+-    if (source_output_count(c) > 1)
++    /* If there are still some source outputs do nothing. */
++    if (source_output_count(c) > 0)
+         return PA_HOOK_OK;
+ 
+     switch_profile_all(c->cards, true, userdata);
+@@ -439,7 +439,7 @@ int pa__init(pa_module *m) {
+         u->source_output_put_slot = pa_hook_connect(&m->core->hooks[PA_CORE_HOOK_SOURCE_OUTPUT_PUT], PA_HOOK_NORMAL,
+                                                     (pa_hook_cb_t) source_output_put_hook_callback, u);
+ 
+-        u->source_output_unlink_slot = pa_hook_connect(&m->core->hooks[PA_CORE_HOOK_SOURCE_OUTPUT_UNLINK], PA_HOOK_NORMAL,
++        u->source_output_unlink_slot = pa_hook_connect(&m->core->hooks[PA_CORE_HOOK_SOURCE_OUTPUT_UNLINK_POST], PA_HOOK_NORMAL,
+                                                        (pa_hook_cb_t) source_output_unlink_hook_callback, u);
+ 
+         u->card_init_profile_slot = pa_hook_connect(&m->core->hooks[PA_CORE_HOOK_CARD_CHOOSE_INITIAL_PROFILE], PA_HOOK_NORMAL,
+-- 
+2.7.4
+

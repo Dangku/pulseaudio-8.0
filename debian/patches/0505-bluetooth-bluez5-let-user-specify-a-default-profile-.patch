@@ -1,0 +1,105 @@
+From c4f7b88b81042506fd1920c8daa5d80b4e715276 Mon Sep 17 00:00:00 2001
+From: Simon Fels <simon.fels@canonical.com>
+Date: Sun, 1 Nov 2015 16:42:53 +0100
+Subject: [PATCH 505/507] bluetooth: bluez5: let user specify a default profile
+ to set
+
+---
+ src/modules/bluetooth/module-bluez5-device.c | 32 ++++++++++++++++++++++++++++
+ 1 file changed, 32 insertions(+)
+
+diff --git a/src/modules/bluetooth/module-bluez5-device.c b/src/modules/bluetooth/module-bluez5-device.c
+index 999c254..07f88d0 100644
+--- a/src/modules/bluetooth/module-bluez5-device.c
++++ b/src/modules/bluetooth/module-bluez5-device.c
+@@ -58,6 +58,7 @@ PA_MODULE_DESCRIPTION("BlueZ 5 Bluetooth audio sink and source");
+ PA_MODULE_VERSION(PACKAGE_VERSION);
+ PA_MODULE_LOAD_ONCE(false);
+ PA_MODULE_USAGE("path=<device object path> "
++                "profile=<a2dp|hsp|hfgw> "
+                 "sco_sink=<name of sink> "
+                 "sco_source=<name of source> ");
+ 
+@@ -74,6 +75,7 @@ PA_MODULE_USAGE("path=<device object path> "
+ #define USE_SCO_OVER_PCM(u) (u->profile == PA_BLUETOOTH_PROFILE_HEADSET_HEAD_UNIT && (u->hsp.sco_sink && u->hsp.sco_source))
+ static const char* const valid_modargs[] = {
+     "path",
++    "profile",
+     "sco_sink",
+     "sco_source",
+     NULL
+@@ -158,6 +160,7 @@ struct userdata {
+     struct sbc_info sbc_info;
+     struct hsp_info hsp;
+ 
++    char *default_profile;
+     bool transport_acquire_pending;
+     pa_io_event *stream_event;
+ };
+@@ -2069,6 +2072,7 @@ static int add_card(struct userdata *u) {
+     pa_bluetooth_profile_t *p;
+     const char *uuid;
+     void *state;
++    const char *default_profile;
+ 
+     pa_assert(u);
+     pa_assert(u->device);
+@@ -2121,6 +2125,16 @@ static int add_card(struct userdata *u) {
+     *p = PA_BLUETOOTH_PROFILE_OFF;
+     pa_hashmap_put(data.profiles, cp->name, cp);
+ 
++    if ((default_profile = pa_modargs_get_value(u->modargs, "profile", NULL))) {
++        if (pa_hashmap_get(data.profiles, default_profile)) {
++            pa_card_new_data_set_profile(&data, default_profile);
++            pa_log_debug("Using %s profile as default", default_profile);
++            u->default_profile = pa_xstrdup(default_profile);
++        }
++        else
++            pa_log_warn("Profile '%s' not valid or not supported by device.", default_profile);
++    }
++
+     u->card = pa_card_new(u->core, &data);
+     pa_card_new_data_done(&data);
+     if (!u->card) {
+@@ -2132,6 +2146,15 @@ static int add_card(struct userdata *u) {
+     u->card->set_profile = set_profile_cb;
+ 
+     p = PA_CARD_PROFILE_DATA(u->card->active_profile);
++
++    if (*p != PA_BLUETOOTH_PROFILE_OFF && (!d->transports[*p] ||
++                              d->transports[*p]->state == PA_BLUETOOTH_TRANSPORT_STATE_DISCONNECTED)) {
++        pa_log_warn("Default profile not connected, selecting off profile");
++        u->card->active_profile = pa_hashmap_get(u->card->profiles, "off");
++        u->card->save_profile = false;
++    }
++
++    p = PA_CARD_PROFILE_DATA(u->card->active_profile);
+     u->profile = *p;
+ 
+     if (USE_SCO_OVER_PCM(u))
+@@ -2246,6 +2269,11 @@ static pa_hook_result_t transport_state_changed_cb(pa_bluetooth_discovery *y, pa
+     if (t->device == u->device)
+         handle_transport_state_change(u, t);
+ 
++    /* For the case that we've currently the 'off' profile set we need to move
++     * on to a possible configured default profile. */
++    if (u->profile == PA_BLUETOOTH_PROFILE_OFF && pa_bluetooth_device_any_transport_connected(u->device) && u->default_profile)
++        pa_card_set_profile(u->card, pa_hashmap_get(u->card->profiles, u->default_profile), false);
++
+     return PA_HOOK_OK;
+ }
+ 
+@@ -2503,6 +2531,10 @@ void pa__done(pa_module *m) {
+ 
+     if (u->modargs)
+         pa_modargs_free(u->modargs);
++
++    if (u->default_profile)
++        pa_xfree(u->default_profile);
++
+     pa_xfree(u);
+ }
+ 
+-- 
+2.6.2
+

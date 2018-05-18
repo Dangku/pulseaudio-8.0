@@ -1,0 +1,29 @@
+From f8213ddec83cd0780ae77ad423581d9a65857d1f Mon Sep 17 00:00:00 2001
+From: Simon Fels <simon.fels@canonical.com>
+Date: Thu, 26 Nov 2015 08:54:20 +0100
+Subject: [PATCH] bluetooth: bluez5: don't reactivate default profile when off
+ is active
+
+---
+ src/modules/bluetooth/module-bluez5-device.c | 5 -----
+ 1 file changed, 5 deletions(-)
+
+diff --git a/src/modules/bluetooth/module-bluez5-device.c b/src/modules/bluetooth/module-bluez5-device.c
+index b4f81cd..8c5a9cc 100644
+--- a/src/modules/bluetooth/module-bluez5-device.c
++++ b/src/modules/bluetooth/module-bluez5-device.c
+@@ -2323,11 +2323,6 @@ static pa_hook_result_t transport_state_changed_cb(pa_bluetooth_discovery *y, pa
+     if (t->device == u->device)
+         handle_transport_state_change(u, t);
+ 
+-    /* For the case that we've currently the 'off' profile set we need to move
+-     * on to a possible configured default profile. */
+-    if (u->profile == PA_BLUETOOTH_PROFILE_OFF && pa_bluetooth_device_any_transport_connected(u->device) && u->default_profile)
+-        pa_card_set_profile(u->card, pa_hashmap_get(u->card->profiles, u->default_profile), false);
+-
+     return PA_HOOK_OK;
+ }
+ 
+-- 
+2.5.0
+

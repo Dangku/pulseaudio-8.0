@@ -1,0 +1,203 @@
+From 0eec59e95eb6bb396aaa97fddcf71d10813a3b7d Mon Sep 17 00:00:00 2001
+From: Simon Fels <simon.fels@canonical.com>
+Date: Sun, 1 Nov 2015 16:44:45 +0100
+Subject: [PATCH 506/507] bluetooth: bluez5: prevent SCO sink/source to be
+ suspended
+
+This only works in conjunction with changes to the droid module
+as this will set the property according to the current profile
+selected for the droid card.
+---
+ src/modules/bluetooth/module-bluez5-device.c   | 83 ++++++++++++++++++++++++++
+ src/modules/bluetooth/module-bluez5-discover.c | 13 ++++
+ 2 files changed, 96 insertions(+)
+
+diff --git a/src/modules/bluetooth/module-bluez5-device.c b/src/modules/bluetooth/module-bluez5-device.c
+index 07f88d0..f1e887c 100644
+--- a/src/modules/bluetooth/module-bluez5-device.c
++++ b/src/modules/bluetooth/module-bluez5-device.c
+@@ -73,6 +73,7 @@ PA_MODULE_USAGE("path=<device object path> "
+ #define HSP_MAX_GAIN 15
+ 
+ #define USE_SCO_OVER_PCM(u) (u->profile == PA_BLUETOOTH_PROFILE_HEADSET_HEAD_UNIT && (u->hsp.sco_sink && u->hsp.sco_source))
++
+ static const char* const valid_modargs[] = {
+     "path",
+     "profile",
+@@ -127,6 +128,9 @@ struct userdata {
+     pa_hook_slot *sink_state_changed_slot;
+     pa_hook_slot *source_state_changed_slot;
+ 
++    pa_hook_slot *sco_sink_proplist_changed_slot;
++    bool prevent_suspend_transport;
++
+     pa_bluetooth_discovery *discovery;
+     pa_bluetooth_device *device;
+     pa_bluetooth_transport *transport;
+@@ -1042,6 +1046,69 @@ static int add_source(struct userdata *u) {
+     return 0;
+ }
+ 
++#define HSP_PREVENT_SUSPEND_STR "bluetooth.hsp.prevent.suspend.transport"
++
++/* Check and update prevent_suspend_transport value from sco sink proplist.
++ *
++ * Return < 0 if sink proplist doesn't contain HSP_PREVENT_SUSPEND_STR value,
++ * 1 if value is 'true'
++ * 0 if value is something else. */
++static int check_proplist(struct userdata *u) {
++    int ret;
++    const char *str;
++
++    pa_assert(u);
++    pa_assert(u->hsp.sco_sink);
++
++    if ((str = pa_proplist_gets(u->hsp.sco_sink->proplist, HSP_PREVENT_SUSPEND_STR))) {
++        if (pa_streq(str, "true"))
++            ret = 1;
++        else
++            ret = 0;
++    } else
++        ret = -1;
++
++    u->prevent_suspend_transport = ret == 1;
++
++    pa_log_debug("Set %s %s (ret %d)", HSP_PREVENT_SUSPEND_STR, u->prevent_suspend_transport ? "true" : "false", ret);
++
++    return ret;
++}
++
++/* There are cases where keeping the transport running even when sco sink and source are suspended
++ * is needed.
++ * To work with these cases, check sco.sink for bluetooth.hsp.prevent.suspend.transport value, and
++ * when set to true prevent closing the transport when sink suspends.
++ * Also, if the sink&source are suspended when sco-sink suspend.transport value changes to true,
++ * bring sco transport up. When suspend.transport value changes to false while sink&source are suspended,
++ * tear down the transport. */
++static pa_hook_result_t update_allow_release_cb(pa_core *c, pa_sink *s, struct userdata *u) {
++    pa_assert(u);
++    pa_assert(s);
++
++    if (!u->hsp.sco_sink || u->hsp.sco_sink != s)
++        return PA_HOOK_OK;
++
++    if (check_proplist(u) < 0)
++        return PA_HOOK_OK;
++
++    if (!USE_SCO_OVER_PCM(u)) {
++        pa_log_debug("SCO sink not available.");
++        return PA_HOOK_OK;
++    }
++
++    if (!PA_SINK_IS_OPENED(pa_sink_get_state(u->hsp.sco_sink)) &&
++        !PA_SOURCE_IS_OPENED(pa_source_get_state(u->hsp.sco_source))) {
++
++        pa_log_debug("Resuming SCO sink");
++
++        /* Clear all suspend bits, effectively resuming SCO sink for a while. */
++        pa_sink_suspend(s, false, PA_SUSPEND_ALL);
++    }
++
++    return PA_HOOK_OK;
++}
++
+ /* Run from IO thread */
+ static int sink_process_msg(pa_msgobject *o, int code, void *data, int64_t offset, pa_memchunk *chunk) {
+     struct userdata *u = PA_SINK(o)->userdata;
+@@ -2036,6 +2103,13 @@ static int set_profile_cb(pa_card *c, pa_card_profile *new_profile) {
+ 
+         if (!d->transports[*p] || d->transports[*p]->state <= PA_BLUETOOTH_TRANSPORT_STATE_DISCONNECTED) {
+             pa_log_warn("Refused to switch profile to %s: Not connected", new_profile->name);
++
++            /* For the rare case that we were requested to switch to A2DP
++             * but that failed (due the profile got disconnected) we switch
++             * to off */
++            if (*p == PA_BLUETOOTH_PROFILE_A2DP_SINK)
++                pa_assert_se(pa_card_set_profile(u->card, pa_hashmap_get(u->card->profiles, "off"), false) >= 0);
++
+             return -PA_ERR_IO;
+         }
+     }
+@@ -2162,6 +2236,7 @@ static int add_card(struct userdata *u) {
+ 
+     pa_log_debug("Created card (current profile %s)",
+                  pa_bluetooth_profile_to_string(u->profile));
++
+     return 0;
+ }
+ 
+@@ -2445,6 +2520,10 @@ int pa__init(pa_module* m) {
+         pa_hook_connect(&u->core->hooks[PA_CORE_HOOK_SOURCE_STATE_CHANGED],
+                         PA_HOOK_NORMAL, (pa_hook_cb_t) source_state_changed_cb, u);
+ 
++    u->sco_sink_proplist_changed_slot =
++        pa_hook_connect(&u->core->hooks[PA_CORE_HOOK_SINK_PROPLIST_CHANGED],
++                        PA_HOOK_NORMAL, (pa_hook_cb_t) update_allow_release_cb, u);
++
+     if (add_card(u) < 0)
+         goto fail;
+ 
+@@ -2508,6 +2587,10 @@ void pa__done(pa_module *m) {
+ 
+     if (u->source_state_changed_slot)
+         pa_hook_slot_free(u->source_state_changed_slot);
++
++    if (u->sco_sink_proplist_changed_slot)
++        pa_hook_slot_free(u->sco_sink_proplist_changed_slot);
++
+     if (u->sbc_info.buffer)
+         pa_xfree(u->sbc_info.buffer);
+ 
+diff --git a/src/modules/bluetooth/module-bluez5-discover.c b/src/modules/bluetooth/module-bluez5-discover.c
+index 831e9e2..1f249cc 100644
+--- a/src/modules/bluetooth/module-bluez5-discover.c
++++ b/src/modules/bluetooth/module-bluez5-discover.c
+@@ -38,12 +38,14 @@ PA_MODULE_VERSION(PACKAGE_VERSION);
+ PA_MODULE_LOAD_ONCE(true);
+ PA_MODULE_USAGE(
+     "headset=ofono|native|auto|both "
++    "profile=<a2dp|hsp|hfgw> "
+     "sco_sink=<name of sink> "
+     "sco_source=<name of source> "
+ );
+ 
+ static const char* const valid_modargs[] = {
+     "headset",
++    "profile",
+     "sco_sink",
+     "sco_source",
+     NULL
+@@ -78,6 +80,15 @@ static pa_hook_result_t device_connection_changed_cb(pa_bluetooth_discovery *y,
+         pa_module *m;
+         char *args = pa_sprintf_malloc("path=%s", d->path);
+ 
++        if (pa_modargs_get_value(u->modargs, "profile", NULL)) {
++            char *profile;
++
++            profile = pa_sprintf_malloc("%s profile=\"%s\"", args,
++                                    pa_modargs_get_value(u->modargs, "profile", NULL));
++            pa_xfree(args);
++            args = profile;
++        }
++
+         if (pa_modargs_get_value(u->modargs, "sco_sink", NULL) &&
+             pa_modargs_get_value(u->modargs, "sco_source", NULL)) {
+             char *tmp;
+@@ -88,6 +99,7 @@ static pa_hook_result_t device_connection_changed_cb(pa_bluetooth_discovery *y,
+             pa_xfree(args);
+             args = tmp;
+         }
++
+         pa_log_debug("Loading module-bluez5-device %s", args);
+         m = pa_module_load(u->module->core, "module-bluez5-device", args);
+         pa_xfree(args);
+@@ -182,5 +194,6 @@ void pa__done(pa_module *m) {
+ 
+     if (u->modargs)
+         pa_modargs_free(u->modargs);
++
+     pa_xfree(u);
+ }
+-- 
+2.6.2
+

@@ -1,0 +1,156 @@
+From bf107ef8e9bfda2f2609dfedd717726f387ae8a6 Mon Sep 17 00:00:00 2001
+From: Simon Fels <simon.fels@canonical.com>
+Date: Mon, 30 Nov 2015 13:57:44 +0100
+Subject: [PATCH] Further fixes for HFP/A2DP with BlueZ 5.x
+
+---
+ src/modules/bluetooth/backend-native.c       |  3 +-
+ src/modules/bluetooth/bluez5-util.c          |  6 ++++
+ src/modules/bluetooth/bluez5-util.h          |  2 ++
+ src/modules/bluetooth/module-bluez5-device.c | 44 +++++++++++++++++++++++-----
+ 4 files changed, 46 insertions(+), 9 deletions(-)
+
+diff --git a/src/modules/bluetooth/backend-native.c b/src/modules/bluetooth/backend-native.c
+index 1f65146..442bb64 100644
+--- a/src/modules/bluetooth/backend-native.c
++++ b/src/modules/bluetooth/backend-native.c
+@@ -351,7 +351,8 @@ static DBusMessage *profile_new_connection(DBusConnection *conn, DBusMessage *m,
+         goto fail;
+     }
+ 
+-    if (pa_hashmap_get(d->uuids, PA_BLUETOOTH_UUID_HFP_HF)) {
++    if (pa_hashmap_get(d->uuids, PA_BLUETOOTH_UUID_HFP_HF) &&
++        pa_bluetooth_device_is_transport_connected(d, PA_BLUETOOTH_PROFILE_HEADSET_HEAD_UNIT)) {
+         pa_log_error("Remote device %s supports HFP as well which is preferred over HSP. Aborting.",
+                      d->address);
+         goto fail;
+diff --git a/src/modules/bluetooth/bluez5-util.c b/src/modules/bluetooth/bluez5-util.c
+index 747384a..3acc4a5 100644
+--- a/src/modules/bluetooth/bluez5-util.c
++++ b/src/modules/bluetooth/bluez5-util.c
+@@ -299,6 +299,12 @@ bool pa_bluetooth_device_any_transport_connected(const pa_bluetooth_device *d) {
+     return false;
+ }
+ 
++bool pa_bluetooth_device_is_transport_connected(const pa_bluetooth_device *d, pa_bluetooth_profile_t profile) {
++    pa_assert(d);
++
++    return d->transports[profile] && d->transports[profile]->state == PA_BLUETOOTH_TRANSPORT_STATE_IDLE;
++}
++
+ static int transport_state_from_string(const char* value, pa_bluetooth_transport_state_t *state) {
+     pa_assert(value);
+     pa_assert(state);
+diff --git a/src/modules/bluetooth/bluez5-util.h b/src/modules/bluetooth/bluez5-util.h
+index 3f97de7..9180263 100644
+--- a/src/modules/bluetooth/bluez5-util.h
++++ b/src/modules/bluetooth/bluez5-util.h
+@@ -144,6 +144,8 @@ void pa_bluetooth_transport_unlink(pa_bluetooth_transport *t);
+ void pa_bluetooth_transport_free(pa_bluetooth_transport *t);
+ 
+ bool pa_bluetooth_device_any_transport_connected(const pa_bluetooth_device *d);
++bool pa_bluetooth_device_is_transport_connected(const pa_bluetooth_device *d, pa_bluetooth_profile_t profile);
++
+ 
+ pa_bluetooth_device* pa_bluetooth_discovery_get_device_by_path(pa_bluetooth_discovery *y, const char *path);
+ pa_bluetooth_device* pa_bluetooth_discovery_get_device_by_address(pa_bluetooth_discovery *y, const char *remote, const char *local);
+diff --git a/src/modules/bluetooth/module-bluez5-device.c b/src/modules/bluetooth/module-bluez5-device.c
+index 8c5a9cc..b4b627a 100644
+--- a/src/modules/bluetooth/module-bluez5-device.c
++++ b/src/modules/bluetooth/module-bluez5-device.c
+@@ -165,6 +165,8 @@ struct userdata {
+     char *default_profile;
+     bool transport_acquire_pending;
+     pa_io_event *stream_event;
++
++    pa_defer_event *set_default_profile_event;
+ };
+ 
+ typedef enum pa_bluetooth_form_factor {
+@@ -2085,13 +2087,6 @@ static int set_profile_cb(pa_card *c, pa_card_profile *new_profile) {
+ 
+         if (!d->transports[*p] || d->transports[*p]->state <= PA_BLUETOOTH_TRANSPORT_STATE_DISCONNECTED) {
+             pa_log_warn("Refused to switch profile to %s: Not connected", new_profile->name);
+-
+-            /* For the rare case that we were requested to switch to A2DP
+-             * but that failed (due the profile got disconnected) we switch
+-             * to off */
+-            if (*p == PA_BLUETOOTH_PROFILE_A2DP_SINK)
+-                pa_assert_se(pa_card_set_profile(u->card, pa_hashmap_get(u->card->profiles, "off"), false) >= 0);
+-
+             return -PA_ERR_IO;
+         }
+     }
+@@ -2209,6 +2204,10 @@ static int add_card(struct userdata *u) {
+         u->card->active_profile = pa_hashmap_get(u->card->profiles, "off");
+         u->card->save_profile = false;
+     }
++    else {
++        pa_xfree(u->default_profile);
++        u->default_profile = NULL;
++    }
+ 
+     p = PA_CARD_PROFILE_DATA(u->card->active_profile);
+     u->profile = *p;
+@@ -2308,6 +2307,23 @@ static pa_hook_result_t device_connection_changed_cb(pa_bluetooth_discovery *y,
+     return PA_HOOK_OK;
+ }
+ 
++static void set_default_profile_cb(pa_mainloop_api *api, pa_defer_event *e, void *user_data) {
++    struct userdata *u = user_data;
++
++    pa_assert(u);
++
++    if (!u->default_profile)
++        return;
++
++    pa_log_debug("Setting default profile %s", u->default_profile);
++
++    pa_assert_se(pa_card_set_profile(u->card, pa_hashmap_get(u->card->profiles, u->default_profile), false) >= 0);
++    pa_xfree(u->default_profile);
++    u->default_profile = NULL;
++
++    api->defer_enable(e, 0);
++}
++
+ /* Run from main thread */
+ static pa_hook_result_t transport_state_changed_cb(pa_bluetooth_discovery *y, pa_bluetooth_transport *t, struct userdata *u) {
+     pa_assert(t);
+@@ -2317,7 +2333,13 @@ static pa_hook_result_t transport_state_changed_cb(pa_bluetooth_discovery *y, pa
+                  pa_bluetooth_profile_to_string(t->profile),
+                  pa_bluetooth_transport_state_to_string(t->state));
+ 
+-    if (t == u->transport && t->state <= PA_BLUETOOTH_TRANSPORT_STATE_DISCONNECTED)
++    if (t->profile == PA_BLUETOOTH_PROFILE_HEADSET_HEAD_UNIT && t->state == PA_BLUETOOTH_TRANSPORT_STATE_PLAYING)
++        pa_assert_se(pa_card_set_profile(u->card, pa_hashmap_get(u->card->profiles, "headset_head_unit"), false) >= 0);
++
++    else if (u->profile == PA_BLUETOOTH_PROFILE_OFF && pa_bluetooth_device_any_transport_connected(u->device) && u->default_profile)
++        u->core->mainloop->defer_enable(u->set_default_profile_event, 1);
++
++    else if (t == u->transport && t->state <= PA_BLUETOOTH_TRANSPORT_STATE_DISCONNECTED)
+         pa_assert_se(pa_card_set_profile(u->card, pa_hashmap_get(u->card->profiles, "off"), false) >= 0);
+ 
+     if (t->device == u->device)
+@@ -2504,6 +2526,9 @@ int pa__init(pa_module* m) {
+     if (!(u->msg = pa_msgobject_new(bluetooth_msg)))
+         goto fail;
+ 
++    u->set_default_profile_event = u->core->mainloop->defer_new(u->core->mainloop, set_default_profile_cb, u);
++    u->core->mainloop->defer_enable(u->set_default_profile_event, 0);
++
+     u->msg->parent.process_msg = device_process_msg;
+     u->msg->card = u->card;
+ 
+@@ -2589,6 +2614,9 @@ void pa__done(pa_module *m) {
+     if (u->default_profile)
+         pa_xfree(u->default_profile);
+ 
++    if (u->set_default_profile_event)
++        u->core->mainloop->defer_free(u->set_default_profile_event);
++
+     pa_xfree(u);
+ }
+ 
+-- 
+2.5.0
+

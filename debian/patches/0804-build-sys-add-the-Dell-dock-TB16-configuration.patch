@@ -1,0 +1,27 @@
+From 6bdf74c27d92828f71f7343158460393ba260541 Mon Sep 17 00:00:00 2001
+From: Hui Wang <hui.wang@canonical.com>
+Date: Thu, 23 Nov 2017 08:47:26 +0800
+Subject: [PATCH] build-sys: add the Dell dock TB16 configuration
+
+Signed-off-by: Hui Wang <hui.wang@canonical.com>
+---
+ src/Makefile.am | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/Makefile.am b/src/Makefile.am
+index b0ca2bc..7a2d361 100644
+--- a/src/Makefile.am
++++ b/src/Makefile.am
+@@ -1285,7 +1285,8 @@ dist_alsaprofilesets_DATA = \
+ 		modules/alsa/mixer/profile-sets/native-instruments-traktorkontrol-s4.conf \
+ 		modules/alsa/mixer/profile-sets/native-instruments-korecontroller.conf \
+ 		modules/alsa/mixer/profile-sets/kinect-audio.conf \
+-		modules/alsa/mixer/profile-sets/sb-omni-surround-5.1.conf
++		modules/alsa/mixer/profile-sets/sb-omni-surround-5.1.conf \
++		modules/alsa/mixer/profile-sets/dell-dock-tb16-usb-audio.conf
+ 
+ if HAVE_UDEV
+ dist_udevrules_DATA = \
+-- 
+2.7.4
+

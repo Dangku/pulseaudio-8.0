@@ -1,0 +1,2 @@
+usr/lib/pulse-*/modules/libtruststore-util.so
+usr/lib/pulse-*/modules/module-trust-store.so

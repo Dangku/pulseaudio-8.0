@@ -1,0 +1,605 @@
+From ff36148e002232842ea0f07b148e5844c5d44ceb Mon Sep 17 00:00:00 2001
+From: David Henningsson <david.henningsson@canonical.com>
+Date: Wed, 22 Jul 2015 16:37:19 +0200
+Subject: [PATCH 4/5] Trust-store patch
+
+...includes some fixes elsewhere as well.
+
+Signed-off-by: David Henningsson <david.henningsson@canonical.com>
+---
+ configure.ac                                 |  15 ++
+ src/Makefile.am                              |  24 +++
+ src/modules/trust-store/module-trust-store.c | 221 +++++++++++++++++++++++++++
+ src/modules/trust-store/truststore.cc        |  74 +++++++++
+ src/modules/trust-store/truststore.h         |  41 +++++
+ src/pulsecore/client.h                       |   4 +
+ src/pulsecore/creds.h                        |   1 +
+ src/pulsecore/iochannel.c                    |   2 +
+ src/pulsecore/protocol-native.c              |  13 ++
+ src/pulsecore/tagstruct.c                    |   1 +
+ src/tests/connect-stress.c                   |   4 +-
+ 12 files changed, 399 insertions(+), 7 deletions(-)
+ create mode 100644 src/modules/trust-store/module-trust-store.c
+ create mode 100644 src/modules/trust-store/truststore.cc
+ create mode 100644 src/modules/trust-store/truststore.h
+
+Index: pulseaudio/configure.ac
+===================================================================
+--- pulseaudio.orig/configure.ac
++++ pulseaudio/configure.ac
+@@ -1414,6 +1414,19 @@ AS_IF([test "x$enable_adrian_aec" != "xn
+     [HAVE_ADRIAN_EC=1])
+ AM_CONDITIONAL([HAVE_ADRIAN_EC], [test "x$HAVE_ADRIAN_EC" = "x1"])
+ 
++# Ubuntu touch trust store
++
++AC_ARG_ENABLE([trust-store],
++    AS_HELP_STRING([--enable-trust-store], [Enable Ubuntu touch trust store]))
++
++AS_IF([test "x$enable_trust_store" != "xno"],
++    [PKG_CHECK_MODULES(TRUST_STORE, [ trust-store ], [HAVE_TRUST_STORE=1], [HAVE_TRUST_STORE=0])],
++    [HAVE_WEBRTC=0])
++
++AS_IF([test "x$enable_trust_store" = "xyes" && test "x$HAVE_TRUST_STORE" = "x0"],
++    [AC_MSG_ERROR([*** Ubuntu touch trust store library not found])])
++
++AM_CONDITIONAL([HAVE_TRUST_STORE], [test "x$HAVE_TRUST_STORE" = "x1"])
+ 
+ 
+ ###################################
+@@ -1583,6 +1596,7 @@ AS_IF([test "x$HAVE_ADRIAN_EC" = "x1"],
+ AS_IF([test "x$HAVE_SPEEX" = "x1"], ENABLE_SPEEX=yes, ENABLE_SPEEX=no)
+ AS_IF([test "x$HAVE_SOXR" = "x1"], ENABLE_SOXR=yes, ENABLE_SOXR=no)
+ AS_IF([test "x$HAVE_WEBRTC" = "x1"], ENABLE_WEBRTC=yes, ENABLE_WEBRTC=no)
++AS_IF([test "x$HAVE_TRUST_STORE" = "x1"], ENABLE_TRUST_STORE=yes, ENABLE_TRUST_STORE=no)
+ AS_IF([test "x$HAVE_TDB" = "x1"], ENABLE_TDB=yes, ENABLE_TDB=no)
+ AS_IF([test "x$HAVE_GDBM" = "x1"], ENABLE_GDBM=yes, ENABLE_GDBM=no)
+ AS_IF([test "x$HAVE_SIMPLEDB" = "x1"], ENABLE_SIMPLEDB=yes, ENABLE_SIMPLEDB=no)
+@@ -1647,6 +1661,7 @@ echo "
+     Enable speex (resampler, AEC): ${ENABLE_SPEEX}
+     Enable soxr (resampler):       ${ENABLE_SOXR}
+     Enable WebRTC echo canceller:  ${ENABLE_WEBRTC}
++    Enable Ubuntu trust store:     ${ENABLE_TRUST_STORE}
+     Enable gcov coverage:          ${ENABLE_GCOV}
+     Enable unit tests:             ${ENABLE_TESTS}
+     Database
+Index: pulseaudio/src/Makefile.am
+===================================================================
+--- pulseaudio.orig/src/Makefile.am
++++ pulseaudio/src/Makefile.am
+@@ -1077,6 +1077,10 @@ if HAVE_WEBRTC
+ modlibexec_LTLIBRARIES += libwebrtc-util.la
+ endif
+ 
++if HAVE_TRUST_STORE
++modlibexec_LTLIBRARIES += libtruststore-util.la
++endif
++
+ if HAVE_ESOUND
+ modlibexec_LTLIBRARIES += \
+ 		libprotocol-esound.la
+@@ -1201,6 +1205,11 @@ modlibexec_LTLIBRARIES += \
+ 		module-filter-heuristics.la \
+ 		module-role-ducking.la
+ 
++if HAVE_TRUST_STORE
++modlibexec_LTLIBRARIES += \
++		module-trust-store.la
++endif
++
+ if HAVE_ESOUND
+ modlibexec_LTLIBRARIES += \
+ 		module-esound-protocol-tcp.la \
+@@ -1527,6 +1536,7 @@ SYMDEF_FILES = \
+ 		module-intended-roles-symdef.h \
+ 		module-suspend-on-idle-symdef.h \
+ 		module-echo-cancel-symdef.h \
++		module-trust-store-symdef.h \
+ 		module-hal-detect-symdef.h \
+ 		module-udev-detect-symdef.h \
+ 		module-systemd-login-symdef.h \
+@@ -2119,6 +2129,20 @@ module_echo_cancel_la_CFLAGS += -DHAVE_W
+ module_echo_cancel_la_LIBADD += libwebrtc-util.la
+ endif
+ 
++if HAVE_TRUST_STORE
++# Separate helper library to keep C and C++ code apart, like we do for webrtc
++libtruststore_util_la_SOURCES = modules/trust-store/truststore.cc
++libtruststore_util_la_CXXFLAGS = $(AM_CXXFLAGS) -std=c++11 $(SERVER_CFLAGS) $(TRUST_STORE_CFLAGS) \
++	$(DBUS_CFLAGS) -DHAVE_TRUST_STORE=1
++libtruststore_util_la_LIBADD = libpulsecore-@PA_MAJORMINOR@.la $(TRUST_STORE_LIBS) $(DBUS_LIBS)
++libtruststore_util_la_LDFLAGS = -avoid-version
++
++module_trust_store_la_SOURCES = modules/trust-store/module-trust-store.c
++module_trust_store_la_LDFLAGS = $(MODULE_LDFLAGS)
++module_trust_store_la_LIBADD = $(MODULE_LIBADD) libtruststore-util.la
++module_trust_store_la_CFLAGS = $(AM_CFLAGS) -DHAVE_TRUST_STORE=1
++endif
++
+ # RTP modules
+ module_rtp_send_la_SOURCES = modules/rtp/module-rtp-send.c
+ module_rtp_send_la_LDFLAGS = $(MODULE_LDFLAGS)
+Index: pulseaudio/src/modules/trust-store/module-trust-store.c
+===================================================================
+--- /dev/null
++++ pulseaudio/src/modules/trust-store/module-trust-store.c
+@@ -0,0 +1,228 @@
++/***
++    This file is part of PulseAudio.
++
++    Copyright 2015 Canonical Ltd.
++    Written by David Henningsson <david.henningsson@canonical.com>
++
++    PulseAudio is free software; you can redistribute it and/or modify
++    it under the terms of the GNU Lesser General Public License as published
++    by the Free Software Foundation; either version 2.1 of the License,
++    or (at your option) any later version.
++
++    PulseAudio is distributed in the hope that it will be useful, but
++    WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
++    General Public License for more details.
++
++    You should have received a copy of the GNU Lesser General Public License
++    along with PulseAudio; if not, see <http://www.gnu.org/licenses/>.
++***/
++#ifdef HAVE_CONFIG_H
++#include <config.h>
++#endif
++
++#include <pulsecore/i18n.h>
++#include <pulsecore/core.h>
++#include <pulsecore/module.h>
++#include <pulse/xmalloc.h>
++#include <pulsecore/fdsem.h>
++#include <pulsecore/thread.h>
++#include <pulsecore/core-util.h>
++#include <pulse/mainloop-api.h>
++
++#include "module-trust-store-symdef.h"
++
++PA_MODULE_AUTHOR("David Henningsson");
++PA_MODULE_DESCRIPTION("Ubuntu touch trust store integration");
++PA_MODULE_VERSION(PACKAGE_VERSION);
++PA_MODULE_LOAD_ONCE(true);
++
++#include "truststore.h"
++
++#define REQUEST_GRANTED 1
++#define REQUEST_DENIED -1
++#define REQUEST_PENDING 0
++
++struct userdata;
++
++struct per_client {
++    uint32_t index;
++    char *appname;
++    uid_t uid;
++    pid_t pid;
++    struct userdata *userdata;
++    pa_dynarray *pending_requests;
++    pa_atomic_t result;
++};
++
++struct userdata {
++    pa_core *core;
++    pa_trust_store *ts;
++    pa_hashmap *per_clients;
++    pa_thread *thread;
++    pa_fdsem *fdsem;
++    pa_io_event *io_event;
++    pa_hook_slot *connect_hook_slot;
++};
++
++static struct per_client *per_client_new(struct userdata *u, uint32_t client_index) {
++    struct per_client *pc;
++    pa_client *client = pa_idxset_get_by_index(u->core->clients, client_index);
++
++    pa_assert(client);
++    if (!client->creds_valid) {
++        pa_log_warn("Client %d has no creds, cannot authenticate", client_index);
++        return NULL;
++    }
++
++    pc = pa_xnew0(struct per_client, 1);
++    // TODO: Do we need something else than the application name here -
++    // the application can probably spoof it
++    pc->appname = pa_xstrdup(pa_proplist_gets(client->proplist, PA_PROP_APPLICATION_NAME));
++    pc->index = client_index;
++    pc->uid = client->creds.uid;
++    pc->pid = client->creds.pid;
++    pc->pending_requests = pa_dynarray_new(NULL);
++    pc->userdata = u;
++
++    pa_hashmap_put(u->per_clients, (void *) (size_t) client_index, pc);
++
++    return pc;
++}
++
++static void per_client_free_from_hashmap(void *data) {
++    struct per_client *pc = data;
++    if (!pc)
++        return;
++    pa_xfree(pc->appname);
++    pa_dynarray_free(pc->pending_requests);
++    pa_xfree(pc);
++}
++
++static void thread_func(void *data) {
++    struct per_client *pc = data;
++
++    bool result = pa_trust_store_check(pc->userdata->ts, pc->appname, pc->uid, pc->pid,
++        /// TRANSLATORS: The app icon and name appears above this string. If the phrase
++        /// can't be translated in this language, translate the whole sentence
++        /// 'This app wants to record audio.'
++        _("wants to record audio."));
++
++    pa_atomic_store(&pc->result, result ? REQUEST_GRANTED : REQUEST_DENIED);
++    pa_fdsem_post(pc->userdata->fdsem);
++}
++
++static void check_queue(struct userdata *u) {
++    struct per_client *pc;
++    void *dummy;
++
++    pa_log_debug("Checking queue, size: %d, thread object: %s",
++                 pa_hashmap_size(u->per_clients), pa_yes_no(u->thread));
++    if (u->thread) {
++        pa_access_data *ad;
++        unsigned i;
++        int result;
++        pc = pa_thread_get_data(u->thread);
++        result = pa_atomic_load(&pc->result);
++        if (result == REQUEST_PENDING)
++            return; /* Still processing */
++        pa_thread_free(u->thread);
++        u->thread = NULL;
++
++        pa_log_debug("Letting client %d (%s) know the result (%s)",
++            pc->index, pc->appname, result == REQUEST_GRANTED ? "granted" : "rejected");
++        PA_DYNARRAY_FOREACH(ad, pc->pending_requests, i) {
++            ad->async_finish_cb(ad, result == REQUEST_GRANTED);
++        }
++        pa_hashmap_remove(u->per_clients, (void*) (size_t) pc->index);
++    }
++
++    /* Find a client that needs asking */
++    PA_HASHMAP_FOREACH(pc, u->per_clients, dummy) {
++        if (u->thread)
++            return;
++        pa_assert(pa_atomic_load(&pc->result) == REQUEST_PENDING);
++        pa_log_debug("Starting thread to ask about client %d (%s)", pc->index,
++                     pc->appname);
++        u->thread = pa_thread_new("trust-store", thread_func, pc);
++    }
++}
++
++static void check_fdsem(pa_mainloop_api *a, pa_io_event *e, int fd, pa_io_event_flags_t ee,
++                        void *userdata) {
++    struct userdata *u = userdata;
++    pa_fdsem_after_poll(u->fdsem);
++    check_queue(u);
++    pa_fdsem_before_poll(u->fdsem);
++}
++
++static pa_hook_result_t connect_record_hook(pa_core *core, pa_access_data *d, struct userdata *u) {
++    struct per_client *pc = pa_hashmap_get(u->per_clients, (void*) (size_t) d->client_index);
++    int r;
++    if (!pc)
++        pc = per_client_new(u, d->client_index);
++
++    r = pa_atomic_load(&pc->result);
++    pa_log_debug("Checking permission to record for client %d (%s) ", d->client_index,
++        r == REQUEST_GRANTED ? "granted" : r != REQUEST_PENDING ? "rejected" : "unknown");
++    if (r == REQUEST_GRANTED) return PA_HOOK_OK;
++    if (r != REQUEST_PENDING) return PA_HOOK_STOP;
++
++    pa_dynarray_append(pc->pending_requests, d);
++    check_queue(u);
++    return PA_HOOK_CANCEL;
++}
++
++/* Test code - remove from final product */
++static void test(struct userdata *u) {
++    uint32_t dummy;
++    pa_client *client;
++
++    PA_IDXSET_FOREACH(client, u->core->clients, dummy) {
++        if (client->creds_valid)
++            pa_trust_store_check(u->ts, "The evil app", client->creds.uid,
++                client->creds.pid, "%1% wants to eat your laundry.");
++    }
++}
++
++int pa__init(pa_module *m) {
++    struct userdata *u;
++    pa_trust_store *ts = pa_trust_store_new();
++    if (ts == NULL)
++        return -1;
++    u = pa_xnew0(struct userdata, 1);
++    u->ts = ts;
++    u->core = m->core;
++    u->per_clients = pa_hashmap_new_full(pa_idxset_trivial_hash_func, pa_idxset_trivial_compare_func,
++        NULL, per_client_free_from_hashmap);
++    m->userdata = u;
++    u->connect_hook_slot = pa_hook_connect(&m->core->access[PA_ACCESS_HOOK_CONNECT_RECORD],
++        PA_HOOK_NORMAL, (pa_hook_cb_t) connect_record_hook, u);
++
++    pa_assert_se(u->fdsem = pa_fdsem_new());
++    pa_assert_se(u->io_event = m->core->mainloop->io_new(m->core->mainloop,
++                 pa_fdsem_get(u->fdsem), PA_IO_EVENT_INPUT, check_fdsem, u));
++    pa_fdsem_before_poll(u->fdsem);
++
++    test(u);
++    return 0;
++}
++
++void pa__done(pa_module *m) {
++    struct userdata *u = m->userdata;
++    if (u) {
++        if (u->connect_hook_slot)
++            pa_hook_slot_free(u->connect_hook_slot);
++        if (u->thread)
++            pa_thread_free(u->thread);
++        if (u->io_event)
++            m->core->mainloop->io_free(u->io_event);
++        if (u->fdsem)
++            pa_fdsem_free(u->fdsem);
++        if (u->per_clients)
++            pa_hashmap_free(u->per_clients);
++        if (u->ts)
++            pa_trust_store_free(u->ts);
++        pa_xfree(u);
++    }
++}
+Index: pulseaudio/src/modules/trust-store/truststore.cc
+===================================================================
+--- /dev/null
++++ pulseaudio/src/modules/trust-store/truststore.cc
+@@ -0,0 +1,74 @@
++#ifdef HAVE_CONFIG_H
++#include <config.h>
++#endif
++
++#include <memory>
++#include <core/dbus/bus.h>
++#include <core/trust/dbus_agent.h>
++#include <core/trust/agent.h>
++
++#include <pulse/cdecl.h>
++
++PA_C_DECL_BEGIN
++#include <pulsecore/core-util.h>
++#include <pulse/xmalloc.h>
++#include <pulsecore/log.h>
++
++#include "truststore.h"
++PA_C_DECL_END
++
++class TrustStore {
++public:
++    std::shared_ptr<core::trust::Agent> agent;
++};
++
++pa_trust_store* pa_trust_store_new() {
++    try {
++        auto bus = std::make_shared<core::dbus::Bus>(core::dbus::WellKnownBus::session);
++        auto agent = core::trust::dbus::create_multi_user_agent_for_bus_connection(bus, "PulseAudio");
++        auto ts = new TrustStore();
++        ts->agent = agent;
++        return (pa_trust_store *) ts;
++    } catch(const std::exception &e) {
++        pa_log_error("Could not create Ubuntu touch trust store connection: %s",
++            e.what());
++    } catch(...) {
++        pa_log_error("Could not create Ubuntu touch trust store connection");
++        return NULL;
++    }
++}
++
++void pa_trust_store_free(pa_trust_store *t) {
++    pa_assert(t != NULL);
++    auto ts = (TrustStore*) t;
++    delete ts;
++}
++
++bool pa_trust_store_check(pa_trust_store *t, const char *appname,
++                          uid_t uid, pid_t pid, const char *description) {
++    auto ts = (TrustStore*) t;
++    try {
++
++        core::trust::Agent::RequestParameters params {
++            core::trust::Uid{uid},
++            core::trust::Pid{pid},
++            appname,
++            core::trust::Feature{0},
++            description
++        };
++        pa_log_debug("Asking Ubuntu touch trust store for permission (app: %s)",
++            params.application.id.c_str());
++        auto answer = ts->agent->authenticate_request_with_parameters(params);
++        if (answer == core::trust::Request::Answer::granted) {
++            pa_log_debug("Request granted.");
++            return true;
++        }
++        pa_log_info("Request denied.");
++    } catch(const std::exception &e) {
++        pa_log_error("Could not ask Ubuntu touch trust store for permission: %s",
++            e.what());
++    } catch(...) {
++        pa_log_error("Could not ask Ubuntu touch trust store for permission");
++    }
++    return false;
++}
+Index: pulseaudio/src/modules/trust-store/truststore.h
+===================================================================
+--- /dev/null
++++ pulseaudio/src/modules/trust-store/truststore.h
+@@ -0,0 +1,41 @@
++/***
++    This file is part of PulseAudio.
++
++    Copyright 2015 Canonical Ltd.
++    Written by David Henningsson <david.henningsson@canonical.com>
++
++    PulseAudio is free software; you can redistribute it and/or modify
++    it under the terms of the GNU Lesser General Public License as published
++    by the Free Software Foundation; either version 2.1 of the License,
++    or (at your option) any later version.
++
++    PulseAudio is distributed in the hope that it will be useful, but
++    WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
++    General Public License for more details.
++
++    You should have received a copy of the GNU Lesser General Public License
++    along with PulseAudio; if not, see <http://www.gnu.org/licenses/>.
++***/
++
++#ifndef footruststorehfoo
++#define footruststorehfoo
++
++#ifdef HAVE_CONFIG_H
++#include <config.h>
++#endif
++
++#include <pulsecore/creds.h>
++
++#ifdef HAVE_TRUST_STORE
++PA_C_DECL_BEGIN
++typedef struct pa_trust_store pa_trust_store;
++
++pa_trust_store* pa_trust_store_new();
++void pa_trust_store_free(pa_trust_store *ts);
++bool pa_trust_store_check(pa_trust_store *ts, const char *appname,
++    uid_t uid, pid_t pid, const char *description);
++PA_C_DECL_END
++#endif
++
++#endif
+Index: pulseaudio/src/pulsecore/client.h
+===================================================================
+--- pulseaudio.orig/src/pulsecore/client.h
++++ pulseaudio/src/pulsecore/client.h
+@@ -26,6 +26,7 @@
+ #include <pulse/proplist.h>
+ #include <pulsecore/core.h>
+ #include <pulsecore/module.h>
++#include <pulsecore/creds.h>
+ 
+ /* Every connection to the server should have a pa_client
+  * attached. That way the user may generate a listing of all connected
+@@ -35,6 +36,9 @@ struct pa_client {
+     uint32_t index;
+     pa_core *core;
+ 
++    pa_creds creds;
++    bool creds_valid;
++
+     pa_proplist *proplist;
+     pa_module *module;
+     char *driver;
+Index: pulseaudio/src/pulsecore/creds.h
+===================================================================
+--- pulseaudio.orig/src/pulsecore/creds.h
++++ pulseaudio/src/pulsecore/creds.h
+@@ -41,6 +41,7 @@ typedef struct pa_cmsg_ancil_data pa_cms
+ struct pa_creds {
+     gid_t gid;
+     uid_t uid;
++    pid_t pid;
+ };
+ 
+ /* Struct for handling ancillary data, i e, extra data that can be sent together with a message
+Index: pulseaudio/src/pulsecore/iochannel.c
+===================================================================
+--- pulseaudio.orig/src/pulsecore/iochannel.c
++++ pulseaudio/src/pulsecore/iochannel.c
+@@ -323,6 +323,7 @@ ssize_t pa_iochannel_write_with_creds(pa
+ 
+     u = (struct ucred*) CMSG_DATA(&cmsg.hdr);
+ 
++    /* FIXME: Check whether ucred->pid should be used */
+     u->pid = getpid();
+     if (ucred) {
+         u->uid = ucred->uid;
+@@ -437,6 +438,7 @@ ssize_t pa_iochannel_read_with_ancil_dat
+ 
+                 ancil_data->creds.gid = u.gid;
+                 ancil_data->creds.uid = u.uid;
++                ancil_data->creds.pid = u.pid;
+                 ancil_data->creds_valid = true;
+             }
+             else if (cmh->cmsg_type == SCM_RIGHTS) {
+Index: pulseaudio/src/pulsecore/protocol-native.c
+===================================================================
+--- pulseaudio.orig/src/pulsecore/protocol-native.c
++++ pulseaudio/src/pulsecore/protocol-native.c
+@@ -2814,6 +2814,13 @@ static void command_auth(pa_pdispatch *p
+             do_shm = false;
+ 
+ #ifdef HAVE_CREDS
++    {
++        const pa_creds *creds;
++        if ((creds = pa_pdispatch_creds(pd))) {
++            c->client->creds = *creds;
++            c->client->creds_valid = true;
++        }
++    }
+     if (do_shm) {
+         /* Only enable SHM if both sides are owned by the same
+          * user. This is a security measure because otherwise data
+@@ -5623,6 +5630,7 @@ typedef struct pa_protocol_native_access
+ } pa_protocol_native_access_data;
+ 
+ static void check_access_finish_cb(pa_access_data *data, bool res) {
++    uint32_t command, tag;
+     pa_protocol_native_access_data *d = (pa_protocol_native_access_data *) data;
+     pa_native_connection *c = PA_NATIVE_CONNECTION(d->userdata);
+ 
+@@ -5631,6 +5639,11 @@ static void check_access_finish_cb(pa_ac
+         goto finish;
+     }
+ 
++    pa_assert_se(pa_tagstruct_getu32(d->tc, &command) >= 0);
++    pa_assert_se(pa_tagstruct_getu32(d->tc, &tag) >= 0);
++    pa_assert(command == d->command);
++    pa_assert(tag == d->tag);
++
+     /* call the dispatcher again, hopefully this time, the access check will
+      * fail or succeed immediately */
+     command_table[d->command](d->pd, d->command, d->tag, d->tc, d->userdata);
+Index: pulseaudio/src/tests/connect-stress.c
+===================================================================
+--- pulseaudio.orig/src/tests/connect-stress.c
++++ pulseaudio/src/tests/connect-stress.c
+@@ -63,7 +63,7 @@ static const pa_sample_spec sample_spec
+ 
+ static void context_state_callback(pa_context *c, void *userdata);
+ 
+-static void connect(const char *name, int *try) {
++static void connect2(const char *name, int *try) {
+     int ret;
+     pa_mainloop_api *api;
+ 
+@@ -201,7 +201,7 @@ START_TEST (connect_stress_test) {
+         streams[i] = NULL;
+ 
+     for (i = 0; i < NTESTS; i++) {
+-        connect(bname, &i);
++        connect2(bname, &i);
+         usleep(rand() % 500000);
+         disconnect();
+         usleep(rand() % 500000);
+Index: pulseaudio/po/POTFILES.in
+===================================================================
+--- pulseaudio.orig/po/POTFILES.in
++++ pulseaudio/po/POTFILES.in
+@@ -23,6 +23,7 @@ src/modules/gconf/module-gconf.c
+ src/modules/jack/module-jack-sink.c
+ src/modules/jack/module-jack-source.c
+ src/modules/macosx/module-coreaudio-device.c
++src/modules/trust-store/module-trust-store.c
+ src/modules/module-always-sink.c
+ src/modules/module-cli.c
+ src/modules/module-combine.c

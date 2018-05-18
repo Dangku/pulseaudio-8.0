@@ -1,0 +1,48 @@
+From 3560cafb03fc62745874077fb1153ec8d0cc59ac Mon Sep 17 00:00:00 2001
+From: David Henningsson <david.henningsson@canonical.com>
+Date: Thu, 27 Aug 2015 15:27:16 +0200
+Subject: [PATCH] Add tagstruct copy method
+
+Originally by Wim Taymans, backported by David Henningsson
+---
+ src/pulsecore/tagstruct.c | 14 ++++++++++++++
+ src/pulsecore/tagstruct.h |  2 ++
+ 2 files changed, 16 insertions(+)
+
+Index: pulseaudio/src/pulsecore/tagstruct.c
+===================================================================
+--- pulseaudio.orig/src/pulsecore/tagstruct.c
++++ pulseaudio/src/pulsecore/tagstruct.c
+@@ -97,6 +97,19 @@ void pa_tagstruct_free(pa_tagstruct*t) {
+         pa_xfree(t);
+ }
+ 
++pa_tagstruct *pa_tagstruct_copy(pa_tagstruct*t) {
++    pa_tagstruct*tc;
++
++    tc = pa_xnew(pa_tagstruct, 1);
++    tc->data = pa_xmemdup(t->data, t->length);
++    tc->allocated = t->length;
++    tc->length = t->length;
++    tc->rindex = 0;
++    tc->type = PA_TAGSTRUCT_DYNAMIC;
++
++    return tc;
++}
++
+ static inline void extend(pa_tagstruct*t, size_t l) {
+     pa_assert(t);
+     pa_assert(t->type != PA_TAGSTRUCT_FIXED);
+Index: pulseaudio/src/pulsecore/tagstruct.h
+===================================================================
+--- pulseaudio.orig/src/pulsecore/tagstruct.h
++++ pulseaudio/src/pulsecore/tagstruct.h
+@@ -64,6 +64,8 @@ pa_tagstruct *pa_tagstruct_new(void);
+ pa_tagstruct *pa_tagstruct_new_fixed(const uint8_t* data, size_t length);
+ void pa_tagstruct_free(pa_tagstruct*t);
+ 
++pa_tagstruct *pa_tagstruct_copy(pa_tagstruct*t);
++
+ int pa_tagstruct_eof(pa_tagstruct*t);
+ const uint8_t* pa_tagstruct_data(pa_tagstruct*t, size_t *l);
+ 

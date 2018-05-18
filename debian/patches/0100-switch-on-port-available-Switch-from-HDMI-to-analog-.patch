@@ -1,0 +1,54 @@
+From f6e1ac2dd2af01088fb9fea85bd57502a214335b Mon Sep 17 00:00:00 2001
+From: David Henningsson <david.henningsson@canonical.com>
+Date: Fri, 29 Jan 2016 20:33:22 +0100
+Subject: [PATCH] switch-on-port-available: Switch from HDMI to analog; but not
+ the other way around
+
+If you have headphones plugged in and plug in HDMI; you want sound
+to stay on headphones.
+If you have HDMI plugged in and you plug in headphones; you want sound
+to switch to headphones.
+
+Hence we need to take priority into account as well when determining
+whether to switch to a new profile or not.
+
+BugLink: https://bugs.freedesktop.org/show_bug.cgi?id=93903
+Signed-off-by: David Henningsson <david.henningsson@canonical.com>
+---
+ src/modules/module-switch-on-port-available.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/modules/module-switch-on-port-available.c b/src/modules/module-switch-on-port-available.c
+index 5dd9786..6f4c895 100644
+--- a/src/modules/module-switch-on-port-available.c
++++ b/src/modules/module-switch-on-port-available.c
+@@ -29,7 +29,7 @@
+ 
+ #include "module-switch-on-port-available-symdef.h"
+ 
+-static bool profile_good_for_output(pa_card_profile *profile) {
++static bool profile_good_for_output(pa_card_profile *profile, unsigned prio) {
+     pa_sink *sink;
+     uint32_t idx;
+ 
+@@ -49,7 +49,7 @@ static bool profile_good_for_output(pa_card_profile *profile) {
+         if (!sink->active_port)
+             continue;
+ 
+-        if (sink->active_port->available != PA_AVAILABLE_NO)
++        if ((sink->active_port->available != PA_AVAILABLE_NO) && (sink->active_port->priority >= prio))
+             return false;
+     }
+ 
+@@ -88,7 +88,7 @@ static int try_to_switch_profile(pa_device_port *port) {
+         switch (port->direction) {
+             case PA_DIRECTION_OUTPUT:
+                 name = profile->output_name;
+-                good = profile_good_for_output(profile);
++                good = profile_good_for_output(profile, port->priority);
+                 break;
+ 
+             case PA_DIRECTION_INPUT:
+-- 
+2.7.3
+

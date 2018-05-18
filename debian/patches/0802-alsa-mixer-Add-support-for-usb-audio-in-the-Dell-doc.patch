@@ -1,0 +1,95 @@
+From 60c0edd5286dbb731c671ad3e6886c1e3e1eb067 Mon Sep 17 00:00:00 2001
+From: Hui Wang <hui.wang@canonical.com>
+Date: Fri, 26 May 2017 15:42:40 +0800
+Subject: [PATCH] alsa-mixer: Add support for usb audio in the Dell dock TB16
+
+There are one headset jack on the front panel of TB16, through this
+jack, we have one stereo headphone output (hw:%f,0,0) and one mono
+headset-mic input (hw:%f,0,0); and there is one speaker output jack
+(hw:%f,1,0) on the rear panel of TB16.
+
+The detail information of the Dell dock TB16:
+http://www.dell.com/support/article/sg/en/sgbsdt1/SLN301105
+
+Signed-off-by: Hui Wang <hui.wang@canonical.com>
+---
+ .../alsa/mixer/profile-sets/90-pulseaudio.rules    |  1 +
+ .../profile-sets/dell-dock-tb16-usb-audio.conf     | 55 ++++++++++++++++++++++
+ 2 files changed, 56 insertions(+)
+ create mode 100644 src/modules/alsa/mixer/profile-sets/dell-dock-tb16-usb-audio.conf
+
+diff --git a/src/modules/alsa/mixer/profile-sets/90-pulseaudio.rules b/src/modules/alsa/mixer/profile-sets/90-pulseaudio.rules
+index 70e34e6..805a05b 100644
+--- a/src/modules/alsa/mixer/profile-sets/90-pulseaudio.rules
++++ b/src/modules/alsa/mixer/profile-sets/90-pulseaudio.rules
+@@ -98,5 +98,6 @@ ATTRS{idVendor}=="17cc", ATTRS{idProduct}=="1021", ENV{PULSE_PROFILE_SET}="nativ
+ ATTRS{idVendor}=="0763", ATTRS{idProduct}=="2012", ENV{PULSE_PROFILE_SET}="maudio-fasttrack-pro.conf"
+ ATTRS{idVendor}=="045e", ATTRS{idProduct}=="02bb", ENV{PULSE_PROFILE_SET}="kinect-audio.conf"
+ ATTRS{idVendor}=="041e", ATTRS{idProduct}=="322c", ENV{PULSE_PROFILE_SET}="sb-omni-surround-5.1.conf"
++ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="4014", ENV{PULSE_PROFILE_SET}="dell-dock-tb16-usb-audio.conf"
+ 
+ LABEL="pulseaudio_end"
+diff --git a/src/modules/alsa/mixer/profile-sets/dell-dock-tb16-usb-audio.conf b/src/modules/alsa/mixer/profile-sets/dell-dock-tb16-usb-audio.conf
+new file mode 100644
+index 0000000..1186552
+--- /dev/null
++++ b/src/modules/alsa/mixer/profile-sets/dell-dock-tb16-usb-audio.conf
+@@ -0,0 +1,55 @@
++# This file is part of PulseAudio.
++#
++# PulseAudio is free software; you can redistribute it and/or modify
++# it under the terms of the GNU Lesser General Public License as
++# published by the Free Software Foundation; either version 2.1 of the
++# License, or (at your option) any later version.
++#
++# PulseAudio is distributed in the hope that it will be useful, but
++# WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
++# General Public License for more details.
++#
++# You should have received a copy of the GNU Lesser General Public License
++# along with PulseAudio; if not, see <http://www.gnu.org/licenses/>.
++
++; Dell Dock TB16 USB audio
++;
++; This card has two stereo pairs of output, One Mono input.
++;
++; See default.conf for an explanation on the directives used here.
++
++[General]
++auto-profiles = no
++
++[Mapping analog-stereo-headphone]
++description = Headphone
++device-strings = hw:%f,0,0
++channel-map = left,right
++direction = output
++
++[Mapping analog-stereo-speaker]
++description = Speaker
++device-strings = hw:%f,1,0
++channel-map = left,right
++direction = output
++
++[Mapping analog-stereo-mic]
++description = Headset-Mic
++device-strings = hw:%f,0,0
++channel-map = left,right
++direction = input
++
++
++[Profile output:analog-stereo-speaker]
++description = Speaker
++output-mappings = analog-stereo-speaker
++priority = 60
++skip-probe = yes
++
++[Profile output:analog-stereo-headphone+input:analog-stereo-mic]
++description = Headset
++output-mappings = analog-stereo-headphone
++input-mappings = analog-stereo-mic
++priority = 80
++skip-probe = yes
+-- 
+1.9.1
+

@@ -1,0 +1,107 @@
+Subject: Bring back proper jack detection
+Author: Rex Tsai <rex.tsai@canonical.com>
+Forwarded: no
+
+Index: pulseaudio/src/modules/droid/droid-util.c
+===================================================================
+--- pulseaudio.orig/src/modules/droid/droid-util.c
++++ pulseaudio/src/modules/droid/droid-util.c
+@@ -110,6 +110,20 @@ static bool string_convert_str_to_num(co
+     return false;
+ }
+ 
++static bool check_port_availability(const char *port) {
++    pa_assert(port);
++
++    pa_log_debug("Checking availability for port '%s'", port);
++
++    for (unsigned int i = 0; port_availability[i]; i++) {
++        if (pa_streq(port_availability[i], port)) {
++            return true;
++        }
++    }
++
++    return false;
++}
++
+ static char *list_string(struct string_conversion *list, uint32_t flags) {
+     char *str = NULL;
+     char *tmp;
+@@ -1035,6 +1049,9 @@ static pa_droid_port *create_o_port(pa_d
+     if (am->profile_set->config->global_config.default_output_device & device)
+         p->priority += DEFAULT_PRIORITY;
+ 
++    if (check_port_availability(p->name))
++        p->priority += (DEFAULT_PRIORITY * 3);
++
+     return p;
+ }
+ 
+@@ -1124,6 +1141,13 @@ static void add_i_port(pa_droid_mapping
+         if (am->profile_set->config->global_config.attached_input_devices & device)
+             p->priority += DEFAULT_PRIORITY;
+ 
++        /* Make builtin mic the default input device */
++        if (device == AUDIO_DEVICE_IN_BUILTIN_MIC)
++            p->priority += DEFAULT_PRIORITY;
++
++        if (check_port_availability(p->name))
++            p->priority += (DEFAULT_PRIORITY * 3);
++
+         pa_hashmap_put(am->profile_set->all_ports, p->name, p);
+     } else
+         pa_log_debug("  Input port %s from cache", name);
+@@ -1297,6 +1321,9 @@ static int add_ports(pa_core *core, pa_c
+         } else
+             pa_log_debug("  Port %s from cache", p->name);
+ 
++        /* If port/jack detection is available, start as not available by default */
++        dp->available = check_port_availability(p->name) ? PA_AVAILABLE_NO : PA_AVAILABLE_UNKNOWN;
++
+         if (cp) {
+             if (!pa_hashmap_get(dp->profiles, cp->name))
+                 pa_hashmap_put(dp->profiles, cp->name, cp);
+@@ -1749,6 +1776,9 @@ pa_droid_stream *pa_droid_open_input_str
+     if ((s->sample_spec.rate = s->in->common.get_sample_rate(&s->in->common)) != spec->rate)
+         pa_log_warn("Requested sample rate %u but got %u instead.", spec->rate, s->sample_spec.rate);
+ 
++    if (s->sample_spec.channels != spec->channels)
++        pa_log_warn("Requested chennel %u but got %u instead.", spec->channels, s->sample_spec.channels);
++
+     pa_idxset_put(module->inputs, s, NULL);
+ 
+     buffer_size = s->in->common.get_buffer_size(&s->in->common);
+Index: pulseaudio/src/modules/droid/droid-util-44.h
+===================================================================
+--- pulseaudio.orig/src/modules/droid/droid-util-44.h
++++ pulseaudio/src/modules/droid/droid-util-44.h
+@@ -346,4 +346,12 @@ struct string_conversion string_conversi
+ };
+ #undef STRING_ENTRY
+ 
++/* Ports with availability option (for port/jack detection) */
++static const char* port_availability[] = {
++    "output-wired_headset",
++    "output-wired_headphone",
++    "input-wired_headset",
++    NULL
++};
++
+ #endif
+Index: pulseaudio/src/modules/droid/droid-util-51.h
+===================================================================
+--- pulseaudio.orig/src/modules/droid/droid-util-51.h
++++ pulseaudio/src/modules/droid/droid-util-51.h
+@@ -402,4 +402,12 @@ struct string_conversion string_conversi
+ };
+ #undef STRING_ENTRY
+ 
++/* Ports with availability option (for port/jack detection) */
++static const char* port_availability[] = {
++    "output-wired_headset",
++    "output-wired_headphone",
++    "input-wired_headset",
++    NULL
++};
++
+ #endif

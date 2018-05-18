@@ -1,0 +1,7 @@
+usr/lib/pulse-*/modules/libdroid-util-*.so
+usr/lib/pulse-*/modules/libdroid-sink-*.so
+usr/lib/pulse-*/modules/libdroid-source-*.so
+usr/lib/pulse-*/modules/module-droid-sink-*.so
+usr/lib/pulse-*/modules/module-droid-source-*.so
+usr/lib/pulse-*/modules/module-droid-card-*.so
+usr/lib/pulse-*/modules/module-droid-discover.so

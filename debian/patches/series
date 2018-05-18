@@ -1,0 +1,62 @@
+# Ubuntu/Debian specific config/fixes
+0001-volume-config-changes.patch
+0005-dont-load-cork-music-on-phone.patch
+0006-load-module-x11-bell.patch
+0016-nodisplay-autostart.patch
+0022-inotify-wrapper-Quit-daemon-if-pid-file-is-removed.patch
+0024-alsa-mixer-Quick-workaround-for-potential-index-out-.patch
+
+# Cherry-picked from upstream
+0100-switch-on-port-available-Switch-from-HDMI-to-analog-.patch
+0101-card-add-preferred-input-output-port.patch
+0102-switch-on-port-available-prefer-ports-that-have-been.patch
+0103-bluetooth-Add-support-for-automatic-switch-between-h.patch
+0104-bluetooth-Add-support-for-automatic-switch-bluez5.patch
+0105-bluetooth-policy-do-A2DP-profile-restoring-a-bit-lat.patch
+0106-bluetooth-Add-optional-heuristic-for-switching-betwe.patch
+
+# Ubuntu touch stuff
+0202-dont-probe-ucm.patch
+0203-card-Add-hook-before-profile-changes.patch
+0206-module-bluetooth-discover-adding-module-option-profi.patch
+0207-Enable-pulseaudio-droid.patch
+0208-module-bluetooth-device-Allow-leaving-transport-runn.patch
+0209-module-switch-on-connect-adding-parameter-to-allow-s.patch
+0210-module-device-restore-adding-property-to-skip.patch
+0211-corking-a-sink-input-stream-when-stalled.patch
+
+# Ubuntu touch: support for trust-store
+0406-tagstruct-add-copy-method.patch
+0407-access-Add-access-control-hooks.patch
+0408-protocol-native-add-access-checks.patch
+0409-Trust-store-patch.patch
+0410-Add-thread-to-activate-trust-store-interface.patch
+0417-increase-timeout-check-apparmor.patch
+
+# Ubuntu touch: enable bluez5 HFP over ofono support
+0501-bluetooth-bluez5-ofono-add-support-for-HFP-gateway-r.patch
+0502-bluetooth-bluez5-bring-back-SCO-over-PCM-support.patch
+0503-bluetooth-bluez5-ofono-add-support-for-spekaer-micro.patch
+0504-bluetooth-bluez5-add-support-for-both-mode.patch
+0505-bluetooth-bluez5-let-user-specify-a-default-profile-.patch
+0506-bluetooth-bluez5-prevent-SCO-sink-source-to-be-suspe.patch
+0507-bluetooth-bluez5-drop-save-restore-of-SCO-sink-sourc.patch
+0508-bluetooth-bluez5-add-guards-to-prevent-HFP-and-HSP-c.patch
+0509-bluetooth-bluez5-don-t-reactivate-default-profile-wh.patch
+0510-Further-fixes-for-HFP-A2DP-with-BlueZ-5.x.patch
+
+# Ubuntu touch: add support for Android 5.x
+0600-droid-sync-with-upstream-for-Android-5-support-and-b.patch
+0601-droid-alternative-hw-module-id.patch
+0602-droid-inputstream-config-parameters.pach
+0603-droid-port-priority-and-availability.patch
+
+0700-pulsecore-add-new-card-profile-hook.patch
+0701-bluetooth-bluez5-wait-for-all-profiles-to-connect.patch
+
+# Fixes backported from PulseAudio 11.0
+0800-cb78d6f5-fix-lp1690028-lp1672171.patch
+0801-d985276c-fix-lp1539209-lp1562817.patch
+0802-alsa-mixer-Add-support-for-usb-audio-in-the-Dell-doc.patch
+0803-droid-fix-crash-on-module-load.patch
+0804-build-sys-add-the-Dell-dock-TB16-configuration.patch

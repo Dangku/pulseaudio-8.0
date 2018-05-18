@@ -1,0 +1,117 @@
+From: Ricardo Salveti de Araujo <ricardo.salveti@canonical.com>
+Date: Mon, 24 Nov 2014 11:08:33 -0200
+Subject: [PATCH] Identifying and corking a sink-input stream when it gets stalled
+
+On Ubuntu Touch the lifecycle will send a SIGSTOP when an app gets moved
+to background (after 5 seconds), and in case the app has an active
+sink-input stream, pulseaudio will keep consuming the CPU (waiting for
+the client to give more data) until the app gets resumed.
+
+This patch handles only sink-input, and cork/uncork not necessarily
+respecting the previous stream state. For the proper implementation,
+please follow the discussion at
+http://lists.freedesktop.org/archives/pulseaudio-discuss/2014-November/022616.html
+
+To avoid affecting desktop, an environment variable was used
+(PULSE_PLAYBACK_CORK_STALLED), until we get a proper upstream-compatible
+implementation.
+
+Bug-Link: https://bugs.launchpad.net/ubuntu-rtm/+source/pulseaudio/+bug/1391230
+
+Index: pulseaudio/src/pulsecore/protocol-native.c
+===================================================================
+--- pulseaudio.orig/src/pulsecore/protocol-native.c
++++ pulseaudio/src/pulsecore/protocol-native.c
+@@ -124,6 +124,10 @@ typedef struct playback_stream {
+ 
+     bool is_underrun:1;
+     bool drain_request:1;
++
++    bool cork_stalled:1;
++    bool stalled:1;
++
+     uint32_t drain_tag;
+     uint32_t syncid;
+ 
+@@ -218,7 +222,9 @@ enum {
+     PLAYBACK_STREAM_MESSAGE_OVERFLOW,
+     PLAYBACK_STREAM_MESSAGE_DRAIN_ACK,
+     PLAYBACK_STREAM_MESSAGE_STARTED,
+-    PLAYBACK_STREAM_MESSAGE_UPDATE_TLENGTH
++    PLAYBACK_STREAM_MESSAGE_UPDATE_TLENGTH,
++    PLAYBACK_STREAM_MESSAGE_CORK,
++    PLAYBACK_STREAM_MESSAGE_UNCORK
+ };
+ 
+ enum {
+@@ -832,6 +838,18 @@ static int playback_stream_process_msg(p
+             break;
+         }
+ 
++        case PLAYBACK_STREAM_MESSAGE_CORK: {
++            pa_log_debug("Corking '%s'", pa_strnull(pa_proplist_gets(s->sink_input->proplist, PA_PROP_MEDIA_NAME)));
++            pa_sink_input_cork(s->sink_input, true);
++            break;
++        }
++
++        case PLAYBACK_STREAM_MESSAGE_UNCORK: {
++            pa_log_debug("Uncorking '%s'", pa_strnull(pa_proplist_gets(s->sink_input->proplist, PA_PROP_MEDIA_NAME)));
++            pa_sink_input_cork(s->sink_input, false);
++            break;
++        }
++
+         case PLAYBACK_STREAM_MESSAGE_UNDERFLOW: {
+             pa_tagstruct *t;
+ 
+@@ -1184,6 +1202,12 @@ static playback_stream* playback_stream_
+     s->sink_input = sink_input;
+     s->is_underrun = true;
+     s->drain_request = false;
++    /* Only cork when stalled if indeed required, until an upstream compatible way is implemented */
++    if (getenv("PULSE_PLAYBACK_CORK_STALLED"))
++        s->cork_stalled = true;
++    else
++        s->cork_stalled = false;
++    s->stalled = false;
+     pa_atomic_store(&s->missing, 0);
+     s->buffer_attr_req = *a;
+     s->adjust_latency = adjust_latency;
+@@ -1426,6 +1450,12 @@ static void handle_seek(playback_stream
+             /* We just ended an underrun, let's ask the sink
+              * for a complete rewind rewrite */
+ 
++            /* First make sure the stream is not stalled (corked in our case) */
++            if (s->cork_stalled && s->stalled) {
++                s->stalled = false;
++                pa_asyncmsgq_post(pa_thread_mq_get()->outq, PA_MSGOBJECT(s), PLAYBACK_STREAM_MESSAGE_UNCORK, NULL, NULL, NULL, NULL);
++            }
++
+             pa_log_debug("Requesting rewind due to end of underrun.");
+             pa_sink_input_request_rewind(s->sink_input,
+                                          (size_t) (s->sink_input->thread_info.underrun_for == (uint64_t) -1 ? 0 :
+@@ -1605,6 +1635,15 @@ static int sink_input_process_msg(pa_msg
+     return pa_sink_input_process_msg(o, code, userdata, offset, chunk);
+ }
+ 
++static void handle_stalled_sink_input(playback_stream *s) {
++    /* Mark it as stalled (corked) if underrun for more than 5 seconds */
++    if (s->is_underrun && s->sink_input->thread_info.underrun_for > 500000) {
++        pa_log_debug("Marking '%s' as stalled", pa_strnull(pa_proplist_gets(s->sink_input->proplist, PA_PROP_MEDIA_NAME)));
++        s->stalled = true;
++        pa_asyncmsgq_post(pa_thread_mq_get()->outq, PA_MSGOBJECT(s), PLAYBACK_STREAM_MESSAGE_CORK, NULL, NULL, NULL, NULL);
++    }
++}
++
+ static bool handle_input_underrun(playback_stream *s, bool force) {
+     bool send_drain;
+ 
+@@ -1656,6 +1695,9 @@ static int sink_input_pop_cb(pa_sink_inp
+     if (!handle_input_underrun(s, false))
+         s->is_underrun = false;
+ 
++    if (s->cork_stalled)
++        handle_stalled_sink_input(s);
++
+     /* This call will not fail with prebuf=0, hence we check for
+        underrun explicitly in handle_input_underrun */
+     if (pa_memblockq_peek(s->memblockq, chunk) < 0)

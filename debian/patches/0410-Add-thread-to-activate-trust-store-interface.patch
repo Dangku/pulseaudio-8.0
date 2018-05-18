@@ -1,0 +1,108 @@
+From 90dbf1d25e12b9cfc86aecbd02f14a05fd5dca8c Mon Sep 17 00:00:00 2001
+From: Alfonso Sanchez-Beato <alfonso.sanchez-beato@canonical.com>
+Date: Fri, 7 Aug 2015 09:08:02 +0200
+Subject: [PATCH] Add thread to activate trust-store interface
+
+---
+ src/modules/trust-store/module-trust-store.c | 14 +-------------
+ src/modules/trust-store/truststore.cc        | 19 +++++++++++++++++++
+ 2 files changed, 20 insertions(+), 13 deletions(-)
+
+Index: pulseaudio/src/modules/trust-store/module-trust-store.c
+===================================================================
+--- pulseaudio.orig/src/modules/trust-store/module-trust-store.c
++++ pulseaudio/src/modules/trust-store/module-trust-store.c
+@@ -28,6 +28,7 @@
+ #include <pulsecore/fdsem.h>
+ #include <pulsecore/thread.h>
+ #include <pulsecore/core-util.h>
++#include <pulsecore/dynarray.h>
+ #include <pulse/mainloop-api.h>
+ 
+ #include "module-trust-store-symdef.h"
+@@ -173,18 +174,6 @@ static pa_hook_result_t connect_record_h
+     return PA_HOOK_CANCEL;
+ }
+ 
+-/* Test code - remove from final product */
+-static void test(struct userdata *u) {
+-    uint32_t dummy;
+-    pa_client *client;
+-
+-    PA_IDXSET_FOREACH(client, u->core->clients, dummy) {
+-        if (client->creds_valid)
+-            pa_trust_store_check(u->ts, "The evil app", client->creds.uid,
+-                client->creds.pid, "%1% wants to eat your laundry.");
+-    }
+-}
+-
+ int pa__init(pa_module *m) {
+     struct userdata *u;
+     pa_trust_store *ts = pa_trust_store_new();
+@@ -204,7 +193,6 @@ int pa__init(pa_module *m) {
+                  pa_fdsem_get(u->fdsem), PA_IO_EVENT_INPUT, check_fdsem, u));
+     pa_fdsem_before_poll(u->fdsem);
+ 
+-    test(u);
+     return 0;
+ }
+ 
+Index: pulseaudio/src/modules/trust-store/truststore.cc
+===================================================================
+--- pulseaudio.orig/src/modules/trust-store/truststore.cc
++++ pulseaudio/src/modules/trust-store/truststore.cc
+@@ -4,6 +4,7 @@
+ 
+ #include <memory>
+ #include <core/dbus/bus.h>
++#include <core/dbus/asio/executor.h>
+ #include <core/trust/dbus_agent.h>
+ #include <core/trust/agent.h>
+ 
+@@ -13,6 +14,7 @@ PA_C_DECL_BEGIN
+ #include <pulsecore/core-util.h>
+ #include <pulse/xmalloc.h>
+ #include <pulsecore/log.h>
++#include <pulsecore/thread.h>
+ 
+ #include "truststore.h"
+ PA_C_DECL_END
+@@ -20,14 +22,27 @@ PA_C_DECL_END
+ class TrustStore {
+ public:
+     std::shared_ptr<core::trust::Agent> agent;
++    std::shared_ptr<core::dbus::Bus> bus;
++    pa_thread *thread;
+ };
+ 
++static void thread_func(void *data) {
++    class TrustStore *ts = (class TrustStore *) data;
++
++    ts->bus->run();
++}
++
+ pa_trust_store* pa_trust_store_new() {
+     try {
+         auto bus = std::make_shared<core::dbus::Bus>(core::dbus::WellKnownBus::session);
++        bus->install_executor(core::dbus::asio::make_executor(bus));
++
+         auto agent = core::trust::dbus::create_multi_user_agent_for_bus_connection(bus, "PulseAudio");
+         auto ts = new TrustStore();
+         ts->agent = agent;
++        ts->bus = bus;
++        ts->thread = pa_thread_new("trust-store-bus", thread_func, ts);
++
+         return (pa_trust_store *) ts;
+     } catch(const std::exception &e) {
+         pa_log_error("Could not create Ubuntu touch trust store connection: %s",
+@@ -41,6 +56,10 @@ pa_trust_store* pa_trust_store_new() {
+ void pa_trust_store_free(pa_trust_store *t) {
+     pa_assert(t != NULL);
+     auto ts = (TrustStore*) t;
++    if (ts->thread) {
++        ts->bus->stop();
++        pa_thread_free(ts->thread);
++    }
+     delete ts;
+ }
+ 

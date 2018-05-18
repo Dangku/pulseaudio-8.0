@@ -1,0 +1,45 @@
+From 6b12d4743640059c4ad9ffe055ddeebb616f6a9a Mon Sep 17 00:00:00 2001
+From: Ricardo Salveti de Araujo <ricardo.salveti@canonical.com>
+Date: Sun, 22 Jun 2014 23:00:59 -0300
+Subject: [PATCH] module-bluetooth-discover: adding module option profile
+
+Signed-off-by: Ricardo Salveti de Araujo <ricardo.salveti@canonical.com>
+---
+ src/modules/bluetooth/module-bluez4-discover.c | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+Index: pulseaudio/src/modules/bluetooth/module-bluez4-discover.c
+===================================================================
+--- pulseaudio.orig/src/modules/bluetooth/module-bluez4-discover.c
++++ pulseaudio/src/modules/bluetooth/module-bluez4-discover.c
+@@ -38,11 +38,13 @@
+ PA_MODULE_AUTHOR("João Paulo Rechi Vita");
+ PA_MODULE_DESCRIPTION("Detect available BlueZ 4 Bluetooth audio devices and load BlueZ 4 Bluetooth audio drivers");
+ PA_MODULE_VERSION(PACKAGE_VERSION);
+-PA_MODULE_USAGE("sco_sink=<name of sink> "
++PA_MODULE_USAGE("profile=<a2dp|hsp|hfgw> "
++                "sco_sink=<name of sink> "
+                 "sco_source=<name of source> ");
+ PA_MODULE_LOAD_ONCE(true);
+ 
+ static const char* const valid_modargs[] = {
++    "profile",
+     "sco_sink",
+     "sco_source",
+     "async", /* deprecated */
+@@ -81,6 +83,15 @@ static pa_hook_result_t load_module_for_
+ 
+             args = pa_sprintf_malloc("address=\"%s\" path=\"%s\"", d->address, d->path);
+ 
++            if (pa_modargs_get_value(u->modargs, "profile", NULL)) {
++                char *profile;
++
++                profile = pa_sprintf_malloc("%s profile=\"%s\"", args,
++                                        pa_modargs_get_value(u->modargs, "profile", NULL));
++                pa_xfree(args);
++                args = profile;
++            }
++
+             if (pa_modargs_get_value(u->modargs, "sco_sink", NULL) &&
+                 pa_modargs_get_value(u->modargs, "sco_source", NULL)) {
+                 char *tmp;

@@ -1,0 +1,40 @@
+From 8d3a93d699e94d461e6ad814e731765c91a36ec4 Mon Sep 17 00:00:00 2001
+From: David Henningsson <david.henningsson@canonical.com>
+Date: Mon, 21 Mar 2016 10:28:02 +0100
+Subject: [PATCH] alsa-mixer: Quick workaround for potential
+ index-out-of-bounds access
+
+This might fix (LP: #1539209) but I'm not sure.
+
+Upstream had a bigger refactor of the function instead, which
+also fixes the problem (see
+"alsa-mixer: refactor element_probe and fix >2 channel bug" upstream).
+
+Signed-off-by: David Henningsson <david.henningsson@canonical.com>
+---
+ src/modules/alsa/alsa-mixer.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/src/modules/alsa/alsa-mixer.c b/src/modules/alsa/alsa-mixer.c
+index 1fe2a02..ed5fcf7 100644
+--- a/src/modules/alsa/alsa-mixer.c
++++ b/src/modules/alsa/alsa-mixer.c
+@@ -1751,6 +1751,7 @@ static int element_probe(pa_alsa_element *e, snd_mixer_t *m) {
+ 
+                     if (e->n_channels <= 0) {
+                         pa_log_warn("Volume element %s with no channels?", e->alsa_name);
++                        e->n_channels = 1; /* Diwic: quick workaround so that we don't index out of bounds a few rows later */
+                         e->volume_use = PA_ALSA_VOLUME_IGNORE;
+                     }
+ 
+@@ -1767,6 +1768,7 @@ static int element_probe(pa_alsa_element *e, snd_mixer_t *m) {
+                          * don't support elements with more than two
+                          * channels... */
+                         pa_log_warn("Volume element %s has %u channels. That's too much! I can't handle that!", e->alsa_name, e->n_channels);
++                        e->n_channels = 1; /* Diwic: quick workaround so that we don't index out of bounds a few rows later */
+                         e->volume_use = PA_ALSA_VOLUME_IGNORE;
+                     }
+ 
+-- 
+2.7.3
+
